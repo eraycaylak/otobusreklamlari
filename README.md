@@ -1,65 +1,71 @@
-# Otobüs İçi Reklam Yayın Sistemi — Plan
+# Otobüs İçi Reklam Yayın Sistemi
 
-**Amaç:** USB bellek takıp-çıkarmayı tamamen bitirmek. Reklam videosu merkezi panele bir kez
-yüklenecek; otobüsteki oynatıcı dosyayı kendi başına indirecek, sırayla yayınlayacak ve ne
-oynattığını rapora yazacak.
+USB bellek taşımayı bitiren, kendi uygulamamızla çalışan merkezi yayın sistemi.
 
-Ayrıntılı plan: [`docs/plan.md`](docs/plan.md)
+**Ayrıntılar:**
+[`docs/plan.md`](docs/plan.md) · [`docs/uygulama-spec.md`](docs/uygulama-spec.md) · [`docs/saha-kurulum.md`](docs/saha-kurulum.md)
 
 ---
 
-## 1. Önce matematiği düzeltelim — asıl darboğaz sandığın yerde değil
+## Sabit kararlar (mimari bunlara göre kurulu)
 
-| Soru | Cevap |
+| | |
 |---|---|
-| 50 MB, 3 dakikada iner mi? | Gerekli hız sadece **2,3 Mbps**. 4G tipik 10–50 Mbps verir → **8–40 saniye**. Yani iner. |
-| Peki risk yok mu? | Var: **20 otobüs aynı tek WiFi'ye** binerse 3 dakikada 50 MB × 20 = 1 GB sığmaz. |
-| En büyük kazanç nerede? | **Videoyu sunucuda yeniden sıkıştırmak.** 30 sn'lik reklam 18–22" ekran için 2–3 Mbps yeter → dosya **50 MB değil ~8–11 MB**. Sorun %80 buharlaşır. |
-| Aylık veri / otobüs | ~20 reklam değişikliği × 10 MB + telemetri ≈ **250 MB/ay**. Küçük kotalı M2M hat yeter. |
-
-**Sonuç:** Sistemi "3 dakikalık pencere"ye göre tasarlamayalım. Otobüse 4G koyarsak dosya
-*gün boyunca yolda* iner; toplanma alanı sadece bonus olur.
+| İnternet | **Tek hat.** Point-to-Multipoint ile 3 toplanma noktasına dağıtılacak |
+| Otobüs içi cihaz | TV'nin HDMI'sına takılı **Android stick** |
+| Yazılım | **Kendi Android uygulamamız** — oynatma da, veri çekme de, log da uygulamanın içinde |
+| Bağlantı | **Sadece WiFi**, sadece toplanma noktalarında, otobüs başı 4G yok |
+| Pencere | Otobüs noktada **~3 dakika** duruyor |
 
 ---
 
-## 2. Bağlantı seçenekleri — karşılaştırma
+## Mimari
 
-| # | Yöntem | Artı | Eksi | Karar |
-|---|---|---|---|---|
-| **A** | Otobüste 4G/LTE modem (M2M SIM) | Her yerde çalışır, anlık komut kanalı (reklamı acil kaldırma), pencere derdi yok | Otobüs başı aylık hat ücreti | **Ana yol** |
-| **B** | Toplanma alanında WiFi + yerel önbellek sunucusu | Tek hat 20 otobüse hizmet eder, veri maliyeti ~0 | Otobüs alana gelmezse içerik eskir | **İkinci katman (A ile birlikte)** |
-| **C** | Point-to-Point kablosuz köprü (alanda internet yoksa) | Alana 100+ Mbps taşır, ~$65–100/uç | Görüş hattı ve direk/elektrik gerekir | B'nin ön koşulu, alternatifi 4G CPE |
-| **D** | Alanda 4G CPE router (PtP yerine) | Görüş hattı yok, kurulum 1 saat | Alan kapsamasına bağlı | **C yerine ilk denenecek** |
-| **E** | "Akıllı USB" (Pi Zero USB gadget) | TV'nin **sadece USB girişi** varsa kurtarır, TV'ye dokunmaz | Yavaş, kırılgan, ölçeklenmez | Sadece HDMI'sı olmayan TV'ler için |
-| **F** | Otobüsler arası P2P (biri indirir, diğerlerine dağıtır) | Veri maliyetini böler | Karmaşık, 50+ araçtan önce anlamsız | Faz 3 / opsiyonel |
-| **G** | Şoför telefonu hotspot | Bedava | Güvenilmez, şoföre bağlı | Sadece acil kurtarma |
-| **H** | Elden USB (mevcut yöntem) | — | Şu anki derdin | **Yedek olarak kalsın, silme** |
+```
+[Ofis / tek internet hattı]
+   ├── Yayın sunucusu (mini PC): panel + ffmpeg transcode + imzalı manifest + nginx
+   │
+   └── PtMP sektör anten (çatı)
+         ├──► Nokta 1: station radyo → switch → 2-3 AP  +  ÖNBELLEK KUTUSU
+         ├──► Nokta 2: station radyo → switch → 2-3 AP  +  ÖNBELLEK KUTUSU
+         └──► Nokta 3: station radyo → switch → 2-3 AP  +  ÖNBELLEK KUTUSU
+                                                  │
+                                       (WiFi, 3 dakikalık pencere)
+                                                  │
+                                    [Otobüs: Android stick + kendi app]
+                                      - WiFi görünce anında senkron
+                                      - parçalı indirir, hash doğrular
+                                      - atomik geçiş, kesintisiz oynatır
+                                      - oynatma loglarını yükler
+                                                  │ HDMI
+                                              [ TV ]
+```
 
-**Önerilen kombinasyon: A (ana) + B/D (bedava hızlandırıcı) + H (yedek).**
-
----
-
-## 3. Parçalı indirme ("3 dakika durdu, 20 MB indi") — çözülmüş bir problem
-
-HTTP **Range / 206 Partial Content** ile dosya kaldığı bayttan devam eder. Kural seti:
-
-1. Dosya **parçalara** bölünür (4 MB), her parçanın SHA-256'sı manifestte yazılıdır.
-2. Bağlantı kopunca yarım dosya **silinmez**, ilerleme diske yazılır (`aria2c -c`, `.aria2` kontrol dosyası).
-3. Ağ dönünce kaldığı yerden devam; her parça indikçe doğrulanır.
-4. Dosya **%100 bitip hash doğrulanmadan** oynatma listesine girmez.
-5. Eski video, yenisi doğrulanana kadar **silinmez** → ekran asla boş kalmaz.
-6. Geçiş **atomik**: `playlist.json` son anda tek hamlede değişir.
+**Önbellek kutusu mimarinin kalbi.** Dosya tek internet hattından **saatler önce, bir kez**
+iner; 3 dakikalık pencerede 20 otobüse **LAN hızında** dağıtılır. Böylece internet hattının
+hızı neredeyse önemsizleşir.
 
 ---
 
-## 4. Yol haritası
+## Bu 5 şeyi baştan yanlış yaparsan proje yürümez
 
-| Faz | Süre | İş |
+| # | Konu | Doğrusu |
 |---|---|---|
-| **0** | 1 hafta | 1 otobüste tek ekranın modeli, girişi (HDMI var mı?), voltajı, sigortası ölçülür. Alanda 4G hız testi yapılır. |
-| **1 — Pilot** | 2–3 hafta | **2 otobüs.** Hazır CMS (Xibo self-hosted / Yodeck) + 4G'li Android oynatıcı. Amaç: elini USB'ye hiç sürmemek. |
-| **2 — Yaygınlaştırma** | 4–6 hafta | 10–20 otobüs, alanda WiFi + önbellek sunucusu, transcode hattı, izleme paneli. |
-| **3 — Ticarileştirme** | sonrası | Oynatma kanıtı (proof-of-play) raporu, reklamveren paneli, hat/güzergâh bazlı hedefleme, faturaya bağlı rapor. |
+| 1 | **Stick'i TV'nin USB'sinden besleme** | TV USB'si genelde 500 mA verir, stick 900–1200 mA çeker → rastgele resetlenir. Ayrıca **TV kapalıyken stick de ölür, senkron hiç olmaz.** Otobüs hattından 12/24 V → 5 V 2 A ayrı besleme çek. |
+| 2 | **Device Owner modunu atlama** | Uygulamayı sessizce kendi kendine güncelleyebilmek, depo WiFi'sine sessizce bağlanabilmek (Android 10+ normal uygulamada `addNetwork` **-1 döner**) ve kiosk kilidi için **zorunlu**. Kurulumu **kutudan çıkmış, hesap eklenmemiş** cihazda `adb shell dpm set-device-owner` ile yapılır. Sonradan yapılamaz — fabrika ayarı gerekir. |
+| 3 | **Videoyu olduğu gibi dağıtma** | Sunucuda 2,5 Mbps'e sıkıştır: 30 sn reklam **50 MB değil ~10 MB**. 3 dakikalık pencerenin tek gerçek çözümü bu. |
+| 4 | **WorkManager periodic ile senkron denemesi** | Minimum periyot **15 dakika** — 3 dakikalık pencereyi kaçırır. `ConnectivityManager.NetworkCallback` ile WiFi görüldüğü an tetikle. |
+| 5 | **Uzaktan anlık komut beklentisi** | 4G yok → **anlık "reklamı kaldır" komutu yok.** Her reklamın bitiş tarihi içeriğe gömülü olmalı; cihaz internetsizken bile kendi kendine yayından düşürmeli. Bu yüzden saat doğruluğu kritik. |
 
-Pilotta hazır yazılımla başla, kendi sistemini **Faz 2'de** yaz. İlk gün kendi CMS'ini yazmaya
-kalkarsan 3 ay USB taşımaya devam edersin.
+---
+
+## Fazlar
+
+| Faz | Süre | Çıktı |
+|---|---|---|
+| **0 — Ölçüm** | 1 hafta | Stick modeli/WiFi bandı, TV girişleri, güç noktası, PtMP görüş hattı, otobüslerin gerçek duruş süresi |
+| **1 — Pilot** | 3–4 hafta | 1 nokta + 2 otobüs. Uygulamanın v1'i: WiFi'de senkron, parçalı indirme, kesintisiz oynatma, log |
+| **2 — Yaygınlaştırma** | 4–6 hafta | 3 nokta, önbellek kutuları, izleme paneli, sessiz uygulama güncellemesi, 10–20 otobüs |
+| **3 — Ticarileştirme** | sonrası | Oynatma kanıtı raporu, reklamveren paneli, faturalama |
+
+Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda girişme.
