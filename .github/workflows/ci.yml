@@ -17,7 +17,7 @@ jobs:
       - name: Bagimliliklar
         working-directory: sunucu
         run: npm ci --no-audit --no-fund
-      - name: Testler (13 uctan uca test)
+      - name: "Testler (24 test - uctan uca ve guvenlik)"
         working-directory: sunucu
         run: npm test
 
@@ -32,7 +32,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # android-actions/setup-android KULLANILMIYOR:
+      # varsayilan olarak artik SDK deposunda bulunmayan eski 'tools' paketini
+      # kurmaya calisiyor ve "Failed to find package 'tools'" ile dusuyor.
+      # ubuntu-latest imajinda Android SDK zaten kurulu; AGP eksik platform ve
+      # build-tools'u kendisi indiriyor.
+      - name: Android SDK yolunu dogrula
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME" || { echo "Android SDK bulunamadi"; exit 1; }
+          ls "$ANDROID_HOME"
+          yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
 
       - uses: gradle/actions/setup-gradle@v4
 
