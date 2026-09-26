@@ -283,50 +283,33 @@ class SyncService : Service() {
 
     private fun q(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    /**
-     * Oncelik sirasi - kismi pencereden AZAMI FAYDA.
-     *
-     * P0  cihazda eksik EVERGREEN     : ekranin bos kalma riski her seyden onemli
-     * P1  KRITIK uygulama guncellemesi: bozuk surumu duzeltmek en acil is
-     * P2  eksik kampanyalar           : once yayina en yakin, sonra KALAN BAYTI EN AZ olan
-     * P3  normal uygulama guncellemesi
-     *
-     * P2'deki "kalan bayti en az olan once" kurali bilincli: yarim 5 dosya yerine
-     * TAM 3 dosya cikarmak daha degerli, cunku yarim dosya oynatilamaz.
-     */
+    /** Oncelik kurallari ve gerekceleri icin bkz. [SyncPlan]. */
     private suspend fun downloadInPriorityOrder(manifest: PlayManifest, client: OkHttpClient) {
-        val evergreen = manifest.items.filter { it.evergreen }
-        val campaigns = manifest.items.filterNot { it.evergreen }
+        val update = manifest.app?.takeIf { shouldTakeUpdate(it, manifest.rolloutGroups) }
 
-        val missingEvergreen = evergreen.filter { !isReady(it) }
-        for (item in missingEvergreen) {
-            if (!stillRunning()) return
-            fetch(item, manifest, client)
-        }
+        val byId = HashMap<String, ManifestItem>()
+        val needs = ArrayList<SyncPlan.Need>()
 
-        val update = manifest.app?.takeIf { shouldTakeUpdate(it) }
-        if (update != null && update.critical) {
-            if (!stillRunning()) return
-            applyUpdate(update, manifest, client)
-        }
-
-        // Ic ice `it` kullanimi kafa karistirici oldugu icin acik dongu:
-        val plan = ArrayList<Pair<ManifestItem, Long>>()
-        for (item in campaigns) {
+        for (item in manifest.items) {
             if (isReady(item)) continue
             val remaining = db.chunks().remainingBytes(item.sha256)
-            plan += item to (if (remaining > 0L) remaining else item.size)
+            needs += SyncPlan.Need(
+                id = item.id,
+                evergreen = item.evergreen,
+                validFrom = item.validFrom,
+                // Parca kaydi yoksa (hic baslanmamis) tum dosya kalmis demektir
+                remainingBytes = if (remaining > 0L) remaining else item.size
+            )
+            byId[item.id] = item
         }
-        plan.sortWith(compareBy({ it.first.validFrom ?: Long.MAX_VALUE }, { it.second }))
 
-        for ((item, _) in plan) {
+        for (id in SyncPlan.order(needs, appUpdate = update != null, appCritical = update?.critical == true)) {
             if (!stillRunning()) return
-            fetch(item, manifest, client)
-        }
-
-        if (update != null && !update.critical) {
-            if (!stillRunning()) return
-            applyUpdate(update, manifest, client)
+            if (id == SyncPlan.APP_UPDATE) {
+                update?.let { applyUpdate(it, manifest, client) }
+            } else {
+                byId[id]?.let { fetch(it, manifest, client) }
+            }
         }
     }
 
@@ -351,18 +334,14 @@ class SyncService : Service() {
         }
     }
 
-    private fun shouldTakeUpdate(update: AppUpdate): Boolean {
+    /**
+     * Kademeli yayim karari.
+     * Grup sayisi MANIFESTTEN gelir; cihazda sabitlemek, sunucu grup sayisini
+     * degistirdiginde iki tarafin farkli hesap yapmasina yol acardi.
+     */
+    private fun shouldTakeUpdate(update: AppUpdate, groups: Int): Boolean {
         if (update.versionCode <= BuildConfig.VERSION_CODE) return false
-        // Kademeli yayim: cihazin grubu manifestteki esigin altindaysa guncelle
-        val myGroup = deviceRolloutGroup()
-        return myGroup <= update.rolloutGroup
-    }
-
-    /** Cihaz kimliginden tureyen sabit grup - sunucudakiyle ayni formul. */
-    private fun deviceRolloutGroup(): Int {
-        var h = 0
-        for (c in config.deviceId) h = 31 * h + c.code
-        return 1 + (kotlin.math.abs(h) % ROLLOUT_GROUPS)
+        return RolloutGroup.of(config.deviceId, groups) <= update.rolloutGroup
     }
 
     private suspend fun applyUpdate(update: AppUpdate, manifest: PlayManifest, client: OkHttpClient) {
@@ -414,7 +393,6 @@ class SyncService : Service() {
         private const val TAG = "SyncService"
         private const val CHANNEL = "senkron"
         private const val NOTIF_ID = 1001
-        private const val ROLLOUT_GROUPS = 4
         const val EXTRA_NETWORK = "network"
         const val ACTION_STOP = "com.otobusreklam.player.SYNC_STOP"
 

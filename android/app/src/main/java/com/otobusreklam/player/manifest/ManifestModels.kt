@@ -53,7 +53,9 @@ data class PlayManifest(
     val serverTimeMs: Long?,
     val items: List<ManifestItem>,
     val app: AppUpdate?,
-    val policy: Policy
+    val policy: Policy,
+    /** Kademeli yayimda kac grup var - SUNUCUDAN gelir, cihazda sabit degildir. */
+    val rolloutGroups: Int
 )
 
 object ManifestParser {
@@ -68,7 +70,8 @@ object ManifestParser {
             serverTimeMs = parseInstant(o.optString("serverTime", "")),
             items = parseItems(o.optJSONArray("items")),
             app = o.optJSONObject("app")?.let(::parseApp),
-            policy = parsePolicy(o.optJSONObject("policy"))
+            policy = parsePolicy(o.optJSONObject("policy")),
+            rolloutGroups = o.optInt("rolloutGroups", 4).coerceAtLeast(1)
         )
     }
 

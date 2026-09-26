@@ -11,7 +11,7 @@
 
 | Adet | Malzeme | Not |
 |---|---|---|
-| 1 | Yayın sunucusu (mini PC) | Panel + PostgreSQL + ffmpeg + nginx. VPS de olur |
+| 1 | Yayın sunucusu (mini PC) | Node.js + ffmpeg + nginx. Veritabanı gerekmiyor. VPS de olur |
 | 1 | **PtMP sektör AP** (airMAX ac, 120°) | Üç noktayı tek radyodan besler |
 | 1 | Direk / montaj + topraklama + yıldırım koruması | Çatıda |
 | 1 | PoE enjektör + dış mekân UTP | |
@@ -46,7 +46,7 @@
 
 ### 2.1 Merkez
 
-1. Sunucuyu kur: nginx (Range aktif — varsayılan), PostgreSQL, ffmpeg, panel/API.
+1. Sunucuyu kur: Node.js 20+, ffmpeg. Ayrıntı: [`kurulum-calistirma.md`](kurulum-calistirma.md)
 2. Ed25519 anahtar çiftini üret. **Özel anahtar yalnızca merkezde**, açık anahtar uygulamaya gömülür.
 3. `content/`, `manifest/`, `app/` klasör yapısını kur.
 4. Sektör anteni monte et, yönünü üç noktayı kapsayacak şekilde ayarla (120° içinde kalmalı).

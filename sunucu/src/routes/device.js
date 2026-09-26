@@ -5,21 +5,31 @@ import path from 'node:path'
 import { db, save, appendPlayLogs, writeHeartbeat } from '../store.js'
 import { buildManifest } from '../manifest.js'
 import { safeEqual } from '../crypto.js'
+import { tooManyFailures, noteFailure, noteSuccess } from '../guard.js'
 import { paths } from '../config.js'
 
 export const deviceRouter = express.Router()
 
 /** Bearer token ile cihaz kimligi. Iptal edilen cihaz 403 alir. */
 function auth (req, res, next) {
+  const ip = req.ip || 'bilinmiyor'
+  if (tooManyFailures(ip)) {
+    return res.status(429).json({ error: 'cok fazla basarisiz deneme' })
+  }
+
   const header = req.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ error: 'token yok' })
 
   const s = db()
   const device = Object.values(s.devices).find((d) => safeEqual(d.token, token))
-  if (!device) return res.status(401).json({ error: 'token gecersiz' })
+  if (!device) {
+    noteFailure(ip)
+    return res.status(401).json({ error: 'token gecersiz' })
+  }
   if (device.revoked) return res.status(403).json({ error: 'cihaz iptal edilmis' })
 
+  noteSuccess(ip)
   req.device = device
   next()
 }

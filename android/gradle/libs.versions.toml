@@ -13,6 +13,7 @@ lifecycle = "2.8.4"
 coreKtx = "1.13.1"
 appcompat = "1.7.0"
 eddsa = "0.3.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx        = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -35,6 +36,8 @@ coroutines-android       = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-
 # Ed25519: tum API seviyelerinde ayni sekilde calisir.
 # java.security "Ed25519" saglayicisi sadece API 33+ te var; bu kutuphane API 24'te de calisir.
 eddsa                    = { module = "net.i2p.crypto:eddsa", version.ref = "eddsa" }
+
+junit                    = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

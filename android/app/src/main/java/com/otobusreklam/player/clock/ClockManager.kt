@@ -35,16 +35,16 @@ class ClockManager(context: Context) {
      * Guvenilir "simdi". Sistem saatine DEGIL, son sunucu zamani + monotonik
      * sayac farkina dayanir.
      */
-    fun now(): Long {
-        val anchorEpoch = prefs.getLong(K_ANCHOR_EPOCH, 0L)
-        val anchorElapsed = prefs.getLong(K_ANCHOR_ELAPSED, -1L)
-        val elapsed = SystemClock.elapsedRealtime()
+    fun now(): Long = ClockMath.now(
+        anchor = readAnchor(),
+        elapsedNow = SystemClock.elapsedRealtime(),
+        systemNow = System.currentTimeMillis()
+    )
 
-        if (anchorEpoch > 0 && anchorElapsed >= 0 && elapsed >= anchorElapsed) {
-            return anchorEpoch + (elapsed - anchorElapsed)
-        }
-        // Cihaz yeniden baslamis (elapsed sifirlandi) veya hic senkron olmamis
-        return System.currentTimeMillis()
+    private fun readAnchor(): ClockMath.Anchor? {
+        val epoch = prefs.getLong(K_ANCHOR_EPOCH, 0L)
+        val elapsed = prefs.getLong(K_ANCHOR_ELAPSED, -1L)
+        return if (epoch > 0L && elapsed >= 0L) ClockMath.Anchor(epoch, elapsed) else null
     }
 
     /**
@@ -54,11 +54,8 @@ class ClockManager(context: Context) {
     fun trusted(): Boolean {
         if (!prefs.getBoolean(K_TRUSTED, false)) return false
 
-        val anchorElapsed = prefs.getLong(K_ANCHOR_ELAPSED, -1L)
-        if (anchorElapsed < 0) return false
-
         // Monotonik sayac geri gittiyse cihaz yeniden baslamistir -> capa gecersiz
-        if (SystemClock.elapsedRealtime() < anchorElapsed) {
+        if (!ClockMath.anchorValid(readAnchor(), SystemClock.elapsedRealtime())) {
             invalidate("yeniden baslatma")
             return false
         }

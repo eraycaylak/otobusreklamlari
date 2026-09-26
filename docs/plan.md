@@ -186,7 +186,7 @@ Ayrıntılı spesifikasyon: [`uygulama-spec.md`](uygulama-spec.md)
 | Tetikleyici | **`ConnectivityManager.NetworkCallback`** | WiFi görüldüğü an senkron. `PeriodicWorkRequest` **kullanma** — minimum periyodu 15 dakika, 3 dakikalık pencereyi kaçırır |
 | Senkron | HTTPS + **Range** istekleri, 4 MB parça, SHA-256 | Kesintide kaldığı yerden devam |
 | Nokta | nginx + rsync aynası | LAN hızında servis |
-| Merkez | Panel + ffmpeg kuyruğu + manifest imzalama + nginx + Postgres | Yükleme, planlama, rapor |
+| Merkez | Panel + ffmpeg kuyruğu + manifest imzalama + nginx | Yükleme, planlama, rapor |
 
 ---
 

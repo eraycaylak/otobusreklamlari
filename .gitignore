@@ -9,6 +9,8 @@ sunucu/data/
 android/.gradle/
 android/build/
 android/app/build/
+# gradle-wrapper.jar DEPOYA GIRER: olmadan ./gradlew calismaz
+!android/gradle/wrapper/gradle-wrapper.jar
 android/local.properties
 android/.idea/
 *.apk

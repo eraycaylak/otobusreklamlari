@@ -8,7 +8,6 @@ import com.otobusreklam.player.data.ItemEntity
 import com.otobusreklam.player.store.FileStore
 import java.io.File
 import java.time.Instant
-import java.time.LocalTime
 import java.time.ZoneId
 
 /**
@@ -90,27 +89,8 @@ class PlaylistBuilder(
         return inDaypart(item.dayparts, now)
     }
 
-    private fun inDaypart(spec: String, now: Long): Boolean {
-        if (spec.isBlank()) return true
-        val localNow = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime()
-
-        return spec.split(",").filter { it.isNotBlank() }.any { range ->
-            val parts = range.trim().split("-")
-            if (parts.size != 2) return@any true
-            try {
-                val start = LocalTime.parse(parts[0].trim())
-                val end = LocalTime.parse(parts[1].trim())
-                // Gece yarisini asan araliklar: 22:00-02:00
-                if (end.isAfter(start)) {
-                    !localNow.isBefore(start) && localNow.isBefore(end)
-                } else {
-                    !localNow.isBefore(start) || localNow.isBefore(end)
-                }
-            } catch (_: Exception) {
-                true  // bozuk tanim yuzunden reklami dusurmeyelim
-            }
-        }
-    }
+    private fun inDaypart(spec: String, now: Long): Boolean =
+        Daypart.matches(spec, Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime())
 
     /**
      * Agirlikli siralama.
@@ -119,23 +99,15 @@ class PlaylistBuilder(
      * her tur bir kez gecilir, boylece agirlikli icerikler donguye yayilir.
      * (agirliklar 3,1,1 ise: A B C A -> A'lar aralikli)
      */
-    private fun interleaveByWeight(items: List<ItemEntity>): List<Entry> {
-        val maxWeight = items.maxOf { it.weight }
-        val out = ArrayList<Entry>()
-        for (pass in 1..maxWeight) {
-            for (item in items) {
-                if (item.weight >= pass) {
-                    out += Entry(
-                        itemId = item.itemId,
-                        sha256 = item.sha256,
-                        file = store.contentFile(item.sha256, item.remotePath),
-                        durationMs = item.durationMs
-                    )
-                }
-            }
+    private fun interleaveByWeight(items: List<ItemEntity>): List<Entry> =
+        Weighting.interleave(items) { it.weight }.map { item ->
+            Entry(
+                itemId = item.itemId,
+                sha256 = item.sha256,
+                file = store.contentFile(item.sha256, item.remotePath),
+                durationMs = item.durationMs
+            )
         }
-        return out
-    }
 
     private companion object { const val TAG = "PlaylistBuilder" }
 }

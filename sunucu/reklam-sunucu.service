@@ -1,0 +1,39 @@
+# Merkez sunucu systemd unit dosyasi.
+#   sudo cp sunucu/reklam-sunucu.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now reklam-sunucu
+
+[Unit]
+Description=Otobus ici reklam yayin sunucusu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reklam
+Group=reklam
+WorkingDirectory=/opt/reklam/sunucu
+Environment=NODE_ENV=production
+Environment=PORT=8080
+Environment=DATA_DIR=/var/lib/reklam
+# ADMIN_TOKEN'i burada tutmayin; ayri bir dosyadan okutun:
+EnvironmentFile=/etc/reklam/sunucu.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+
+# Guvenlik sikilastirmasi
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/reklam
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Buyuk video yuklemeleri icin
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

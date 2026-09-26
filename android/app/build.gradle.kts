@@ -64,6 +64,13 @@ android {
     packaging {
         resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/DEPENDENCIES")
     }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            all { it.testLogging { events("passed", "skipped", "failed") } }
+        }
+    }
 }
 
 ksp {
@@ -90,4 +97,9 @@ dependencies {
     implementation(libs.eddsa)
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
+    // Birim testleri: Daypart, Weighting, ClockMath, SyncPlan, RolloutGroup
+    // Bu siniflar bilerek Android'e bagimsiz tutuldu; Robolectric/emulator gerekmez.
+    //   ./gradlew :app:testDebugUnitTest
+    testImplementation(libs.junit)
 }

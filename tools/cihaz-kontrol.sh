@@ -62,7 +62,6 @@ baslik "3. Ekran"
 bilgi "cozunurluk: $(sh_ wm size | sed 's/.*: //')  yogunluk: $(sh_ wm density | sed 's/.*: //')"
 
 baslik "4. WiFi 5 GHz destegi"
-BANT=$(sh_ cmd wifi status)
 TARAMA=$(sh_ cmd wifi list-scan-results)
 if echo "$TARAMA" | grep -qE '5[0-9]{3}'; then
   ye "5 GHz tarama sonucu gorundu"

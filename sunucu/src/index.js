@@ -6,6 +6,7 @@ import { config, paths, ensureDirs } from './config.js'
 import { load } from './store.js'
 import { deviceRouter } from './routes/device.js'
 import { adminRouter } from './routes/admin.js'
+import { redactUrl } from './guard.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -27,8 +28,10 @@ app.set('trust proxy', true)
 app.use((req, res, next) => {
   const t = Date.now()
   res.on('finish', () => {
-    // Onbellek kutusu uzerinden gelen istekleri de gorebilmek icin sade erisim logu
-    console.log(`${new Date().toISOString()} ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - t}ms`)
+    // Onbellek kutusu uzerinden gelen istekleri de gorebilmek icin sade erisim logu.
+    // URL REDAKTE EDILIYOR: rapor indirme baglantisi admin tokenini sorgu dizesinde
+    // tasiyor; ham haliyle loglamak tokeni log dosyalarina sizdirirdi.
+    console.log(`${new Date().toISOString()} ${req.method} ${redactUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - t}ms`)
   })
   next()
 })
