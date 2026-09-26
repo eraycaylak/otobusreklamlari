@@ -262,6 +262,57 @@ adminRouter.post('/app/rollout', express.json(), (req, res) => {
 })
 
 /**
+ * Kullanilmayan icerigi sil.
+ *
+ * Cihaz tarafinda temizlik zaten var ama SUNUCUDA yoktu: hicbir kampanyada
+ * gecmeyen yuklemeler diskte sonsuza kadar birikiyordu. Bir yil sonra
+ * "sunucunun diski doldu" diye aranmamak icin bu ucu kullanin.
+ *
+ * Halen yayimda olan APK ve tum kampanyalarin icerigi KORUNUR.
+ */
+adminRouter.post('/temizlik', express.json(), (req, res) => {
+  const s = db()
+  const kullanilan = new Set(Object.values(s.campaigns).map((c) => c.itemSha))
+
+  const silinecek = Object.values(s.items).filter((i) => !kullanilan.has(i.sha256))
+  const kuruProva = req.body?.uygula !== true
+
+  let bayt = 0
+  const adlar = []
+  for (const item of silinecek) {
+    bayt += item.size
+    adlar.push({ sha256: item.sha256, originalName: item.originalName, size: item.size })
+    if (!kuruProva) {
+      fs.rmSync(path.join(paths.content, `${item.sha256}.mp4`), { force: true })
+      delete s.items[item.sha256]
+    }
+  }
+
+  // Eski APK surumleri: sadece yayimdaki surum kalir
+  const apkKorunan = s.app ? path.basename(s.app.file) : null
+  const eskiApk = []
+  for (const f of fs.readdirSync(paths.app)) {
+    if (!f.endsWith('.apk') || f === apkKorunan) continue
+    const tam = path.join(paths.app, f)
+    const boyut = fs.statSync(tam).size
+    eskiApk.push({ dosya: f, size: boyut })
+    bayt += boyut
+    if (!kuruProva) fs.rmSync(tam, { force: true })
+  }
+
+  if (!kuruProva) save()
+
+  res.json({
+    kuruProva,
+    silinen: adlar.length + eskiApk.length,
+    kazanilanBayt: bayt,
+    icerikler: adlar,
+    apkler: eskiApk,
+    not: kuruProva ? 'Gercekten silmek icin {"uygula":true} gonderin.' : 'Silindi.'
+  })
+})
+
+/**
  * Oynatma kaniti raporu (reklamveren faturasi icin).
  * Sadece TAMAMLANMIS oynatmalar sayilir; yarim kalan oynatma faturalanamaz.
  */

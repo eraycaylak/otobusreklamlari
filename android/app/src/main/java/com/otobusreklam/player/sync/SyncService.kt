@@ -28,6 +28,7 @@ import com.otobusreklam.player.store.FileStore
 import com.otobusreklam.player.telemetry.Telemetry
 import com.otobusreklam.player.update.Updater
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -99,7 +100,12 @@ class SyncService : Service() {
 
         network = net
         running = true
-        job = scope.launch {
+
+        // LAZY + explicit start: `job = scope.launch { ... }` yazilsaydi coroutine
+        // atama tamamlanmadan baska bir is parcaciginda calismaya baslayabilirdi.
+        // O anda job hala null oldugu icin stillRunning() false doner ve indirme
+        // hic baslamazdi. Bu yaris kosulunu tamamen kapatiyoruz.
+        val newJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 runSync()
             } catch (e: Exception) {
@@ -111,6 +117,8 @@ class SyncService : Service() {
                 stopSelf()
             }
         }
+        job = newJob
+        newJob.start()
         return START_STICKY
     }
 
@@ -396,13 +404,29 @@ class SyncService : Service() {
         const val EXTRA_NETWORK = "network"
         const val ACTION_STOP = "com.otobusreklam.player.SYNC_STOP"
 
+        /**
+         * Senkronu baslat.
+         *
+         * Android 12+ arka plandan on plan servisi baslatmayi KISITLAR
+         * (ForegroundServiceStartNotAllowedException). Normalde bu bizi etkilemez:
+         * oynatici aktivitesi HOME oldugu ve surekli ekranda durdugu icin uygulama
+         * pratikte her zaman on plandadir.
+         *
+         * Yine de acilis aninda (HOME henuz baslamadan ag gelirse) istisna
+         * firlayabilir; bu senkronu kacirmamiza yol acar ama UYGULAMAYI COKERTMEMELI.
+         * Emniyet kemeri olan periyodik is bir sonraki turda tekrar dener.
+         */
         fun startNow(context: Context, network: Network?) {
             val intent = Intent(context, SyncService::class.java)
             if (network != null) intent.putExtra(EXTRA_NETWORK, network)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "senkron servisi baslatilamadi (arka plan kisiti?): ${e.message}")
             }
         }
 

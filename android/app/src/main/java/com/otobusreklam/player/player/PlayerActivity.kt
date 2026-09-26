@@ -8,11 +8,13 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.otobusreklam.player.BuildConfig
 import com.otobusreklam.player.Config
@@ -35,6 +37,7 @@ import java.time.format.DateTimeFormatter
  * Bu aktivite ayni zamanda HOME'dur. Bu kasitli: uygulama cokerse Android HOME'u
  * yeniden baslatir, yani isletim sistemi bize bedava bir watchdog saglar.
  */
+@OptIn(UnstableApi::class)
 class PlayerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPlayerBinding

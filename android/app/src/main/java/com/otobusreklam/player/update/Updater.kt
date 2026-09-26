@@ -52,7 +52,9 @@ class Updater(
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
                 setAppPackageName(context.packageName)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setInstallReason(android.content.pm.PackageManager.INSTALL_REASON_DEVICE_OWNER)
+                    // INSTALL_REASON_DEVICE_OWNER @SystemApi'dir, public SDK'da yoktur.
+                    // Public karsiligi POLICY: "kurulum bir cihaz politikasi geregi yapiliyor".
+                    setInstallReason(android.content.pm.PackageManager.INSTALL_REASON_POLICY)
                 }
             }
             val sessionId = installer.createSession(params)

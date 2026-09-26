@@ -227,6 +227,38 @@ test('oynatma kaniti raporu CSV uretir', async () => {
   assert.match(csv, /kahve-30;Kahve A\.S\.;OTOBUS-014;.*;3;90;0/)
 })
 
+test('temizlik kullanilmayan icerigi bildirir ve siler', async () => {
+  // Kullanilmayan ikinci bir icerik yukle (hicbir kampanyada gecmeyecek)
+  const atil = crypto.randomBytes(128 * 1024)
+  const up = await fetch(`${base}/api/admin/upload?name=kullanilmayan.mp4`, {
+    method: 'POST', headers: adminHeaders, body: atil
+  })
+  const { item } = await up.json()
+  const dosya = path.join(DATA, 'content', `${item.sha256}.mp4`)
+  assert.ok(fs.existsSync(dosya))
+
+  // Once KURU PROVA: hicbir sey silinmemeli
+  const prova = await (await fetch(`${base}/api/admin/temizlik`, {
+    method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: '{}'
+  })).json()
+  assert.equal(prova.kuruProva, true)
+  assert.equal(prova.silinen, 1)
+  assert.equal(prova.icerikler[0].sha256, item.sha256)
+  assert.ok(fs.existsSync(dosya), 'kuru provada dosya SILINMEMELI')
+
+  // Simdi gercekten sil
+  const sonuc = await (await fetch(`${base}/api/admin/temizlik`, {
+    method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ uygula: true })
+  })).json()
+  assert.equal(sonuc.kuruProva, false)
+  assert.equal(sonuc.silinen, 1)
+  assert.ok(!fs.existsSync(dosya), 'kullanilmayan dosya silinmis olmali')
+
+  // KULLANILAN icerik korunmali
+  assert.ok(fs.existsSync(path.join(DATA, 'content', `${itemSha}.mp4`)), 'kampanyadaki icerik KORUNMALI')
+})
+
 test('iptal edilen cihaz 403 alir', async () => {
   await fetch(`${base}/api/admin/device`, {
     method: 'POST',

@@ -51,9 +51,10 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
-        // Media3'un ExoPlayer.Builder / PlayerView gibi API'leri @UnstableApi
-        // isaretli; her dosyaya @OptIn yazmak yerine modul genelinde aciyoruz.
-        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
+        // NOT: Media3'un @UnstableApi isareti Kotlin'in -opt-in mekanizmasiyla
+        // calismiyor ("not an opt-in requirement marker" uyarisi verir).
+        // Dogru yol, kullanan sinifa androidx.annotation.OptIn koymaktir;
+        // bkz. PlayerActivity.
     }
 
     buildFeatures {

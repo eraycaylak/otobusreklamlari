@@ -73,22 +73,26 @@ async function refresh () {
 }
 
 async function addDevice () {
-  const r = await api('/api/admin/device', {
+  try {
+    const r = await api('/api/admin/device', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: $('dId').value.trim(), label: $('dLabel').value.trim(), group: $('dGroup').value.trim() || 'default' })
   })
-  log(`Cihaz eklendi. TOKEN (bir daha gösterilmez): ${r.device.token}`)
-  await refresh()
+    log(`Cihaz eklendi. TOKEN (bir daha gösterilmez): ${r.device.token}`)
+    await refresh()
+  } catch (e) { log('HATA: ' + e.message) }
 }
 
 async function upload () {
   const f = $('file').files[0]
   if (!f) return log('dosya seçin')
   log(`${f.name} yükleniyor (${(f.size / 1e6).toFixed(1)} MB)...`)
-  const r = await api(`/api/admin/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f })
-  log(`Hazır: ${(r.item.size / 1e6).toFixed(1)} MB, ${r.item.chunkCount} parça, ${Math.round(r.item.durationMs / 1000)} sn`)
-  await refresh()
+  try {
+    const r = await api(`/api/admin/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f })
+    log(`Hazır: ${(r.item.size / 1e6).toFixed(1)} MB, ${r.item.chunkCount} parça, ${Math.round(r.item.durationMs / 1000)} sn`)
+    await refresh()
+  } catch (e) { log('HATA: ' + e.message) }
 }
 
 async function addCampaign () {
@@ -120,15 +124,31 @@ async function uploadApk () {
   const f = $('apk').files[0]
   if (!f) return log('APK seçin')
   const q = new URLSearchParams({ versionCode: $('vCode').value, versionName: $('vName').value, rolloutGroup: $('vRollout').value })
-  const r = await api(`/api/admin/app?${q}`, { method: 'POST', body: f })
-  log(`APK yayımlandı: ${r.app.versionName} (rollout ≤ ${r.app.rolloutGroup})`)
-  await refresh()
+  try {
+    const r = await api(`/api/admin/app?${q}`, { method: 'POST', body: f })
+    log(`APK yayımlandı: ${r.app.versionName} (rollout ≤ ${r.app.rolloutGroup})`)
+    await refresh()
+  } catch (e) { log('HATA: ' + e.message) }
 }
 
 async function expandRollout () {
   if (!confirm('Güncelleme tüm cihazlara açılsın mı? 48 saat sorunsuz çalıştığından emin olun.')) return
   await api('/api/admin/app/rollout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
   await refresh()
+}
+
+async function temizlik (uygula) {
+  if (uygula && !confirm('Kullanılmayan içerik kalıcı olarak silinecek. Emin misiniz?')) return
+  try {
+    const r = await api('/api/admin/temizlik', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uygula })
+    })
+    const mb = (r.kazanilanBayt / 1e6).toFixed(1)
+    $('temizlikSonuc').textContent = r.kuruProva
+      ? `${r.silinen} öğe silinebilir, ${mb} MB kazanılır. Silmek için sağdaki butonu kullanın.`
+      : `${r.silinen} öğe silindi, ${mb} MB kazanıldı.`
+    await refresh()
+  } catch (e) { $('temizlikSonuc').textContent = 'HATA: ' + e.message }
 }
 
 function report () {

@@ -5,6 +5,11 @@ on:
     branches: ["**"]
   pull_request:
 
+# Ayni dal icin yeni push gelince eskisini iptal et: CI dakikasi bosa gitmesin
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sunucu:
     name: Sunucu testleri
