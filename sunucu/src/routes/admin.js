@@ -300,14 +300,30 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
     if (!kuruProva) fs.rmSync(tam, { force: true })
   }
 
+  // Kanit kareleri: cihaz basina gunde bir tane birikiyor.
+  // 50 cihaz x 365 gun = yilda ~18.000 dosya. Saklama suresi disinda kalanlari sil.
+  const kanitGun = Number(req.body?.kanitGun ?? 90)
+  const kanitSiniri = Date.now() - kanitGun * 24 * 3600 * 1000
+  let eskiKanit = 0
+  for (const f of fs.readdirSync(paths.proof)) {
+    const tam = path.join(paths.proof, f)
+    const st = fs.statSync(tam)
+    if (st.mtimeMs >= kanitSiniri) continue
+    eskiKanit += 1
+    bayt += st.size
+    if (!kuruProva) fs.rmSync(tam, { force: true })
+  }
+
   if (!kuruProva) save()
 
   res.json({
     kuruProva,
-    silinen: adlar.length + eskiApk.length,
+    silinen: adlar.length + eskiApk.length + eskiKanit,
     kazanilanBayt: bayt,
     icerikler: adlar,
     apkler: eskiApk,
+    eskiKanitKaresi: eskiKanit,
+    kanitSaklamaGun: kanitGun,
     not: kuruProva ? 'Gercekten silmek icin {"uygula":true} gonderin.' : 'Silindi.'
   })
 })

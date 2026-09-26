@@ -263,7 +263,48 @@ Sadece **tamamlanmış** oynatmalar sayılır — yarım kalan oynatma faturalan
 
 ---
 
-## 8. Sorun giderme
+## 8. Bakım
+
+### Yedekleme — en kritik dosya imzalama anahtarı
+
+`data/keys/ed25519-private.pem` kaybolursa yeni manifest imzalanamaz. Yeni anahtarla
+devam etmek, sahadaki **tüm cihazların yeniden provizyonu** (yani her otobüse tek tek
+gitmek) demektir.
+
+```bash
+cd sunucu
+./scripts/yedekle.sh            # anahtarlar + veritabanı + loglar (videolar hariç)
+./scripts/yedekle.sh --tam      # videolar da dahil
+```
+
+Yedek dosyası özel anahtarı içerir: `chmod 600` ile oluşturulur, **sunucunun kendisinde
+bırakmayın**, başka bir diske veya makineye kopyalayın.
+
+Otomatik:
+
+```cron
+0 2 * * * /opt/reklam/sunucu/scripts/yedekle.sh >> /var/log/reklam-yedek.log 2>&1
+```
+
+### Disk temizliği
+
+Panelden **Disk temizliği** bölümü, veya:
+
+```bash
+# Önce ne silineceğini gör (hiçbir şey silinmez)
+curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'      http://sunucu:8080/api/admin/temizlik
+
+# Gerçekten sil
+curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'      -d '{"uygula":true,"kanitGun":90}'      http://sunucu:8080/api/admin/temizlik
+```
+
+Temizlenenler: hiçbir kampanyada geçmeyen yüklemeler, eski APK sürümleri ve
+`kanitGun`'den (varsayılan 90) eski kanıt kareleri. **Oynatma logları silinmez** —
+onlar faturanın dayanağı.
+
+---
+
+## 9. Sorun giderme
 
 | Belirti | Bakılacak |
 |---|---|
