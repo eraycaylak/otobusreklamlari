@@ -1,432 +1,343 @@
-# Uygulama ve Sunucu Spesifikasyonu
+# Uygulama Mimarisi (gerçekleşen hali)
 
-> Otobüsteki Android uygulaması + merkez sunucu + nokta önbellek kutusu.
-> Kodlamaya başlamadan önce bu dosyayı okuyun; buradaki kuralların çoğu sahada
-> bir kez yanıldığınızda geri dönüşü pahalı olan kurallar.
+> Bu belge **yazılmış kodu** anlatır, tasarım niyetini değil.
+> Kurulum için [`kurulum-calistirma.md`](kurulum-calistirma.md), genel mimari için
+> [`plan.md`](plan.md).
 
 ---
 
 ## 1. Bileşenler
 
-| Bileşen | Nerede | Teknoloji |
+| Bileşen | Yol | Teknoloji |
 |---|---|---|
-| **Yayın paneli + API** | Merkez (ofis mini PC veya VPS) | Node.js/TS veya Python FastAPI + PostgreSQL |
-| **Transcode kuyruğu** | Merkez | ffmpeg + iş kuyruğu |
-| **İçerik servisi** | Merkez | nginx (Range desteği varsayılan) |
-| **Önbellek kutusu** | Her toplanma noktası | Mini PC / Pi 4 + SSD, nginx + rsync + log kuyruğu |
-| **Oynatıcı uygulama** | Otobüs Android stick | Kotlin, Media3/ExoPlayer, Room, OkHttp, WorkManager (tek seferlik) |
+| Merkez sunucu + panel | `sunucu/` | Node.js 20+, Express. **Native bağımlılık yok** |
+| Nokta önbellek kutusu | `onbellek-kutusu/` | nginx + rsync |
+| Otobüs oynatıcı | `android/` | Kotlin, Media3/ExoPlayer, Room, OkHttp |
+| Saha araçları | `tools/` | bash + adb |
+
+### Neden veritabanı yok (sunucuda)
+
+50 cihazlık bir filo için JSON dosyası (`data/db.json`, atomik yazma) + append-only
+NDJSON log yeterli. Kazanç: `npm install` hiçbir derleme gerektirmez, kurulum
+sahada patlamaz, yedekleme `tar` ile biter. Ölçek büyüdüğünde (yüzlerce cihaz,
+milyonlarca log satırı) SQLite'a geçin — `store.js` arayüzü aynı kalacak şekilde yazıldı.
+
+Cihaz tarafında ise **Room var**: orada gerçekten eşzamanlı yazma, indeks ve
+ani güç kesintisine dayanıklılık gerekiyor.
 
 ---
 
-## 2. Manifest — cihazın çektiği tek küçük dosya (~2–5 KB)
+## 2. Manifest ve imza — zarf yaklaşımı
+
+Manifest JSON'unu "kanonik" hale getirip imzalamak klasik bir tuzaktır: anahtar
+sırası, boşluk ve unicode kaçışları yüzünden iki taraf asla aynı baytları üretemez.
+
+Bu yüzden sunucu manifest'in **tam baytlarını** base64'leyip zarfa koyar, imza da
+tam o baytların üzerine atılır:
+
+```json
+{
+  "alg": "ed25519",
+  "payload": "<base64(manifest json baytları)>",
+  "sig": "<base64(64 baytlık ham imza)>"
+}
+```
+
+Cihaz: payload'ı çöz → **imzayı doğrula** → sonra JSON parse et.
+
+- Sunucu: `sunucu/src/crypto.js` (`signEnvelope`)
+- Cihaz: `manifest/SignatureVerifier.kt`
+- Kütüphane: `net.i2p.crypto:eddsa` — `java.security` üzerindeki `"Ed25519"`
+  sağlayıcısı sadece API 33+'ta var; bu kütüphane API 24'te de aynı çalışır.
+
+**Doğrulandı:** Node'un ürettiği imza, Android'in kullanacağı kütüphaneyle bu
+depoda test edilerek doğrulandı — imza geçer, kurcalanmış payload reddedilir,
+UTF-8 (Türkçe + emoji) korunur, hex biçimi iki tarafta aynıdır.
+
+**Kural:** imza tutmazsa cihaz **hiçbir şey indirmez**, mevcut listeyi çalmaya
+devam eder. Önbellek kutusu ele geçse bile cihaza sahte reklam yüklenemez.
+
+### Manifest içeriği
 
 ```json
 {
   "schema": 1,
-  "playlist_version": 128,
-  "device_group": "hat-14",
-  "generated_at": "2026-09-25T08:00:00Z",
-  "server_time": "2026-09-25T08:00:00Z",
-  "app": {
-    "version_code": 42,
-    "url": "app/reklam-42.apk",
-    "size": 8912896,
-    "sha256": "f00d...",
-    "rollout_group": 1,
-    "critical": false
-  },
-  "items": [
-    {
-      "id": "kahve_kampanya_30",
-      "file": "content/a1b2c3d4e5f6.mp4",
-      "size": 10485760,
-      "sha256": "a1b2c3...",
-      "duration_ms": 30000,
-      "weight": 2,
-      "valid_from": "2026-09-26T06:00:00Z",
-      "valid_until": "2026-10-10T23:59:59Z",
-      "dayparts": ["07:00-10:00", "17:00-20:00"],
-      "evergreen": false,
-      "chunks": [
-        {"i": 0, "offset": 0,       "len": 4194304, "sha256": "aa.."},
-        {"i": 1, "offset": 4194304, "len": 4194304, "sha256": "bb.."},
-        {"i": 2, "offset": 8388608, "len": 2097152, "sha256": "cc.."}
-      ]
-    },
-    {
-      "id": "kurumsal_tanitim",
-      "file": "content/9f9f9f9f9f9f.mp4",
-      "size": 6291456,
-      "sha256": "9f9f...",
-      "duration_ms": 20000,
-      "weight": 1,
-      "valid_from": null,
-      "valid_until": null,
-      "evergreen": true,
-      "chunks": [ "..." ]
-    }
-  ],
-  "signature": "ed25519:...."
+  "playlistVersion": 128,
+  "deviceId": "OTOBUS-014",
+  "deviceGroup": "hat-14",
+  "serverTime": "2026-09-26T08:00:00Z",
+  "items": [{
+    "id": "kahve-30",
+    "file": "content/a1b2c3.mp4",
+    "size": 10485760,
+    "sha256": "a1b2c3...",
+    "durationMs": 30000,
+    "weight": 2,
+    "validFrom": "2026-10-01T06:00:00Z",
+    "validUntil": "2026-10-15T23:59:59Z",
+    "dayparts": ["07:00-10:00"],
+    "evergreen": false,
+    "chunks": [{"i":0,"offset":0,"len":4194304,"sha256":"aa.."}]
+  }],
+  "app": { "versionCode": 42, "url": "app/reklam-42.apk", "rolloutGroup": 1, "critical": false, "chunks": [] },
+  "policy": { "staggerMaxMs": 15000, "parallelChunks": 2, "connectTimeoutMs": 8000, "readTimeoutMs": 15000 }
 }
 ```
 
-### Kurallar
-
-- **İçerik adresli dosya adı** (`a1b2c3d4e5f6.mp4` = SHA-256 önekı). Aynı dosya iki kez inmez,
-  önbellek bayatlamaz, "hangi sürüm?" sorusu ortadan kalkar.
-- **`signature`**: manifest Ed25519 ile merkezde imzalanır, açık anahtar uygulamaya gömülüdür.
-  **İmza doğrulanmazsa hiçbir şey indirilmez, mevcut liste aynen çalmaya devam eder.**
-  Önbellek kutusu içeriği değiştirse bile cihaz kabul etmez.
-- **`valid_from` / `valid_until`**: cihazda **çevrimdışı** zorlanır. Kampanyayı başlangıçtan
-  24–48 saat önce yayına it, `valid_from` ile hepsi aynı anda dönmeye başlasın.
-- **`evergreen: true`**: süresi asla dolmaz, cihazdan asla silinmez. Her şey biterse
-  ekranı bu doldurur. En az 2–3 evergreen içerik olsun.
-- **`weight`**: döngüde kaç kez geçeceği (2 = iki kat sık).
-- **`rollout_group`**: uygulama güncellemesinin kademeli yayımı için. Cihazın grubu
-  manifestteki gruptan küçük/eşitse güncellemeyi alır.
-- **`server_time`**: saat senkronu için (§7).
+`policy` sunucudan gelir: cihaz davranışını **APK yayımlamadan** ayarlayabilirsiniz.
 
 ---
 
-## 3. Senkron akışı — 180 saniyeyi nasıl harcıyoruz
+## 3. Senkron akışı
 
-### 3.1 Tetikleme — `PeriodicWorkRequest` KULLANMA
-
-`PeriodicWorkRequest`'in minimum periyodu **15 dakika**. 3 dakikalık pencere kaçar.
-
-Doğrusu:
-
-```kotlin
-// Uygulama açılışında bir kez kaydedilir, uygulama ömrü boyunca açık kalır.
-val req = NetworkRequest.Builder()
-    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    .build()
-
-connectivityManager.registerNetworkCallback(req, object : NetworkCallback() {
-    override fun onAvailable(network: Network) {
-        // SSID bizim ağımız mı? Evet ise gecikmeden tetikle.
-        SyncService.startNow(context, network)      // foreground service
-    }
-    override fun onLost(network: Network) {
-        SyncService.pause(context)                 // durumu diske yaz, yarım dosyayı SİLME
-    }
-})
-```
-
-- **Foreground service** kullan (bildirim gizli/minimal). Yoksa sistem işi kesebilir.
-- Yedek olarak 15 dakikalık bir `PeriodicWorkRequest` dursun — ama **ana tetikleyici
-  NetworkCallback**. Periyodik iş sadece "kaçırılmış bir şey var mı" kontrolü yapar.
-- Foreground service içinde tek seferlik `OneTimeWorkRequest` (expedited) ile indirme
-  çalıştır; böylece süreç ölse bile iş devam eder.
-
-### 3.2 Senkron durum makinesi
+`sync/SyncService.kt`
 
 ```
-BEKLEME
-  └─ WiFi(bizim SSID) görüldü ──► KADEMELI_BEKLE (rastgele 0–15 sn)
-                                    │  (20 cihaz aynı milisaniyede AP'yi boğmasın)
-                                    ▼
-                                 SAAT_SENKRON  (sunucu yanıtındaki Date/server_time)
-                                    ▼
-                                 MANIFEST  (GET, ~2 KB, imza doğrula)
-                                    │ imza geçersiz ──► ABORT (mevcut liste devam eder)
-                                    ▼
-                                 PLANLA  (eksik parçaları ve ÖNCELİĞİ hesapla)
-                                    ▼
-                                 INDIR  ◄──┐  her parça: Range isteği + SHA-256 doğrula
-                                    │      │  durumu her parçada diske yaz (fsync)
-                                    │      └── hâlâ parça var ve WiFi ayakta
-                                    │
-                        WiFi koptu ─┴──► DURAKLAT (yarım dosya KORUNUR) ──► BEKLEME
-                                    ▼
-                                 DOGRULA  (tam dosya SHA-256)
-                                    ▼
-                                 ATOMIK_GECIS  (manifest/current.json rename)
-                                    ▼
-                                 LOG_YUKLE  (gzip NDJSON, ACK'e kadar sakla)
-                                    ▼
-                                 TEMIZLIK  (artık hiçbir manifestte olmayan dosyaları sil)
-                                    ▼
-                                 BEKLEME
+WiFi görüldü (NetworkWatcher)
+   │
+   ├─ 1. MANIFEST — GECİKMESİZ
+   │     (~2 KB. 20 cihaz aynı anda çekse 40 KB; AP'yi boğmaz.
+   │      Kademeli başlatmayı buradan SONRA yapmak pencereyi boşa harcamaz.)
+   │     → Date başlığından saat düzeltmesi
+   │     → İMZA DOĞRULAMA (geçmezse buradan geri dönülür)
+   │
+   ├─ 2. Manifesti diske yaz + oynatıcıyı uyar
+   │     (İNDİRMEDEN ÖNCE: süresi dolan reklam dosyası hâlâ diskte olsa bile
+   │      anında yayından düşsün.)
+   │
+   ├─ 3. Kademeli başlatma: rastgele 0–15 sn
+   │
+   ├─ 4. Öncelik sırasıyla indir
+   │     P0  eksik evergreen        → ekranın boş kalma riski her şeyden önce
+   │     P1  KRİTİK uygulama güncellemesi
+   │     P2  eksik kampanyalar      → validFrom'u en yakın, sonra KALAN BAYTI EN AZ
+   │     P3  normal uygulama güncellemesi
+   │
+   ├─ 5. Oynatıcıyı tekrar uyar
+   ├─ 6. Telemetri: loglar → heartbeat → kanıt karesi (pencerenin sonunda)
+   └─ 7. Temizlik: artık manifestte olmayan dosyalar, 30 günden eski loglar
 ```
 
-### 3.3 Öncelik sıralaması — kısmi pencereden azami fayda
+**P2'deki "kalan baytı en az olan önce" kuralı bilinçli:** yarım 5 dosya yerine
+tam 3 dosya çıkarmak daha değerlidir, çünkü yarım dosya oynatılamaz.
 
-Pencere yetmeyebilir. O yüzden **hangi baytı önce çekeceğin** kritik. Sıra:
+### Tetikleme — `PeriodicWorkRequest` kullanılmıyor
 
-| P | Ne | Neden |
-|---|---|---|
-| **P0** | Cihazda hiç evergreen yoksa evergreen içerik | Ekranın boş kalma riski her şeyden önce gelir |
-| **P1** | `critical: true` uygulama güncellemesi | Bozuk sürümü düzeltmek her şeyden acil |
-| **P2** | `valid_from`'u en yakın olan, **tamamlanmamış** içerikler — aralarında **kalan baytı en az olan önce** | En çok sayıda **tam** dosya çıkarır. Yarım 5 dosya yerine tam 3 dosya. |
-| **P3** | Normal uygulama güncellemesi | |
-| **P4** | Geri kalan içerik | |
+`PeriodicWorkRequest`'in minimum periyodu **15 dakika**; 3 dakikalık pencereyi
+rahatlıkla kaçırır. Asıl tetikleyici `ConnectivityManager.NetworkCallback`
+(`sync/NetworkWatcher.kt`), WiFi ilişkilendirildiği **anda** çalışır.
+`SyncWorker` (15 dk) yalnızca emniyet kemeridir.
 
-```kotlin
-// P2 sıralaması: yayına giriş tarihi, sonra kalan bayt (artan)
-val plan = items
-    .filter { !it.isComplete }
-    .sortedWith(compareBy({ it.validFrom ?: Instant.MAX }, { it.remainingBytes }))
-```
-
-### 3.4 İndirme parametreleri
-
-| Parametre | Değer | Neden |
-|---|---|---|
-| Paralel bağlantı | **2** | AP paylaşımlı; 4+ bağlantı toplam verimi düşürür |
-| Parça boyutu | **4 MB** | Kayıp iş küçük, manifest şişmez |
-| Bağlantı zaman aşımı | 8 sn | Ölü ağda beklemeyelim |
-| Okuma zaman aşımı | 15 sn | |
-| Yeniden deneme | Sınırsız, 3 sn bekleme | Pencere bitince zaten duracak |
-| Range başlığı | `Range: bytes=<offset>-<offset+len-1>` | 206 Partial Content |
-| Doğrulama | Her parçada SHA-256, sonunda tüm dosya | |
-
-```kotlin
-val request = Request.Builder()
-    .url(baseUrl + item.file)
-    .header("Range", "bytes=${chunk.offset}-${chunk.offset + chunk.len - 1}")
-    .header("Authorization", "Bearer $deviceToken")
-    .build()
-// 206 dışında bir kod dönerse parçayı atla, durumu bozma.
-```
-
-### 3.5 Vazgeçilmez kurallar
-
-1. **Yarım dosya asla oynatılmaz.** Tam inip SHA-256 doğrulanmadan listeye girmez.
-2. **Yarım dosya asla silinmez.** Bağlantı koptuğunda `tmp/<sha>.part` ve parça durumu kalır.
-3. **Eski dosya, yenisi doğrulanana kadar silinmez.** Ekran hiçbir koşulda kararmaz.
-4. **Geçiş atomik.** `manifest/next.json` yaz → `fsync` → `rename` → `current.json`.
-5. **Geçiş içerik sınırında olur**, videonun ortasında liste değiştirilmez.
-6. **İmza geçersizse hiçbir şey yapılmaz**, mevcut durum korunur.
+`NET_CAPABILITY_INTERNET` **aranmıyor** — bilinçli: PtMP linki koptuğunda nokta
+ağı "internetsiz" görünür ama önbellek kutusu hâlâ yerel içeriği servis ediyordur.
+İnternet şartı koysaydık tam da en çok ihtiyaç duyulan anda senkron hiç başlamazdı.
 
 ---
 
-## 4. Depolama düzeni
+## 4. Parçalı indirme
+
+`sync/Downloader.kt`
+
+- 4 MB parça, her parçanın SHA-256'sı manifestte
+- `Range: bytes=<offset>-<offset+len-1>` → sunucu **206 Partial Content** döner
+- Her parça inince: hash doğrula → `FileChannel.write(buf, offset)` → `force(false)`
+- Parça durumu Room'da; **bağlantı koptuğunda yarım dosya silinmez**
+- Tüm parçalar bitince **tam dosya SHA-256** doğrulaması
+- Ancak ondan sonra `tmp/<sha>.part` → `content/<sha>.mp4` (atomik `rename`)
+
+**200 kabul edilmez** (tek parçalık dosya hariç): 200 gelmesi sunucunun Range'i
+yok saydığı anlamına gelir; o gövdeyi parçanın offset'ine yazmak dosyayı bozardı.
+
+**Paralellik 2:** paylaşımlı bir AP'de tek cihazın çok bağlantı açması *toplam*
+verimi düşürür.
+
+### Vazgeçilmez kurallar
+
+1. Yarım dosya asla oynatılmaz (tam inip hash doğrulanmadan listeye girmez)
+2. Yarım dosya asla silinmez
+3. Eski dosya, yenisi doğrulanana kadar silinmez → ekran kararmaz
+4. Geçiş atomiktir
+5. Liste değişimi **içerik sınırında** uygulanır, videonun ortasında değil
+6. İmza geçersizse hiçbir şey yapılmaz
+
+---
+
+## 5. Depolama düzeni (cihaz)
 
 ```
 files/
-├── content/
-│   ├── a1b2c3d4e5f6.mp4        ← yalnızca DOĞRULANMIŞ dosyalar
-│   └── 9f9f9f9f9f9f.mp4
-├── tmp/
-│   └── a1b2c3d4e5f6.part       ← yarım indirilen (parça durumu DB'de)
-├── manifest/
-│   ├── current.json            ← oynatıcının okuduğu
-│   └── previous.json           ← geri dönüş için
-├── app/
-│   └── reklam-41.apk           ← çalışan sürümün APK'sı (geri dönüş için)
-└── state.db                    ← Room
-```
-
-**Disk bütçesi:** 16 GB stick'te uygulama + sistem sonrası ~8–10 GB kalır.
-20 reklam × 10 MB = 200 MB. Rahat. Ama temizliği yine de yaz: hiçbir manifestte
-(current + previous) olmayan dosya silinir. Evergreen'ler asla silinmez.
-
-### Room tabloları (asgari)
-
-| Tablo | Alanlar |
-|---|---|
-| `items` | id, sha256, file, size, duration_ms, weight, valid_from, valid_until, dayparts, evergreen, state(MISSING/PARTIAL/READY/BAD) |
-| `chunks` | item_sha256, index, offset, len, sha256, done |
-| `play_log` | seq (autoincrement), item_id, content_sha256, started_at, duration_ms, completed, playlist_version, screen_on, uploaded |
-| `device_state` | device_id, token, playlist_version, last_sync_at, last_known_time, clock_trusted, app_version |
-
-`play_log.seq` **monotonik ve kalıcı** olmalı — sunucu tekrarları `(device_id, seq)` ile ayıklar.
-
----
-
-## 5. Oynatıcı
-
-- **Media3 / ExoPlayer.** `setMediaItems(...)` + `REPEAT_MODE_ALL`, ya da
-  `ConcatenatingMediaSource` — kaynaklar arası geçiş sorunsuz, araya siyah kare girmez;
-  ön-tamponlama (pre-buffering) devrede kalır.
-- Tüm videolar **aynı çözünürlük, aynı fps, aynı codec** olmalı. Karışık olursa geçişte
-  decoder yeniden kurulur ve siyah kare görürsün. Transcode standardı bunu garanti eder.
-- `SurfaceView` (TextureView değil), tam ekran, hiçbir UI öğesi yok, `keepScreenOn`.
-- **Liste değişimi içerik sınırında**: `onMediaItemTransition` içinde bekleyen yeni liste
-  varsa uygula.
-- **Bozuk dosya döngüyü öldürmez:** decode hatasında öğeyi `BAD` işaretle, atla, loga yaz,
-  bir sonraki senkronda tekrar indirmeyi dene.
-- **Daypart/geçerlilik filtresi** liste kurulurken uygulanır; saat başı yeniden değerlendir.
-- Ses: varsayılan **kapalı/kısık** (işletmeci politikası). Yapılandırılabilir olsun.
-
-### Watchdog
-
-```
-AlarmManager her 60 sn:
-  - player.currentPosition ilerledi mi?
-  - hayır ve oynuyor olması gerekiyor → player'ı yeniden kur
-  - 3 denemede düzelmezse → DevicePolicyManager.reboot()
-Her gece 03:30 (garajda) → kontrollü reboot
+├── content/<sha>.mp4        ← YALNIZCA doğrulanmış dosyalar
+├── tmp/<sha>.part           ← yarım inen (parça durumu Room'da)
+├── manifest/current.json    ← oynatıcının okuduğu
+├── manifest/previous.json   ← geri dönüş
+├── app/known-good.apk       ← çalıştığı kanıtlanmış sürüm (temizlikte korunur)
+└── reklam.db                ← Room (items, contents, chunks, play_log)
 ```
 
 ---
 
-## 6. Uygulamanın kendini güncellemesi (Device Owner)
+## 6. Oynatıcı
 
-**Bu olmadan proje yürümez.** Yoksa her uygulama düzeltmesinde 50 stick'e fiziksel
-dokunmak zorunda kalırsın — yani USB taşıma probleminin aynısına dönersin.
+`player/PlayerActivity.kt`, `player/PlaylistBuilder.kt`
 
-```
-manifest.app okunur
-  → cihazın rollout_group'u uygun mu?
-  → APK indir (Range ile, parçalı — büyük dosya)
-  → SHA-256 doğrula
-  → PackageInstaller session (Device Owner → onay ekranı YOK, sessiz kurulum)
-  → kurulum sonrası uygulama yeniden başlar
-  → ilk başarılı senkronda "sürüm sağlıklı" işaretlenir
-```
+- Media3 ExoPlayer, `REPEAT_MODE_ALL` → döngüde ön-tamponlama, araya siyah kare girmez
+- Aktivite aynı zamanda **HOME**: uygulama çökerse Android HOME'u yeniden başlatır —
+  işletim sisteminden bedava watchdog
+- Kiosk: device owner + `startLockTask()` + `LOCK_TASK_FEATURE_NONE`; tüm tuşlar yutulur
+  (kumanda hiçbir şey yapmaz; IR uzatma kablosunu hiç takmamak ek bir katmandır)
+- Ağırlık: `weight=2` olan içerik döngüye iki kez girer ama **arka arkaya değil**
+- Oynatma hatası: 3. hatada içerik `BAD` işaretlenir, döngüden çıkar, panele bildirilir.
+  Yeniden indirmek bunu düzeltmez — çözüm sunucuda yeniden kodlamaktır.
+- Watchdog: 30 sn'de bir ilerleme kontrolü → 2. takılmada oynatıcı yeniden kurulur,
+  6. takılmada cihaz yeniden başlatılır
+- Gece 03:25–03:35 arası kontrollü yeniden başlatma (garajda, yayın saatinde değil)
+- Teşhis ekranı: kumandada INFO/MENU → cihaz, sürüm, liste, son senkron, saat durumu,
+  device owner durumu
 
-**Güvenlik ağı:**
-- Çalışan sürümün APK'sı `files/app/` altında saklanır.
-- Yeni sürüm açılışta 3 kez çökerse veya 2 senkron üst üste başarısız olursa
-  saklanan APK geri kurulur.
-- **Kademeli yayım zorunlu:** `rollout_group` ile önce 2 cihaz, 48 saat sorun yoksa hepsi.
-  50 cihaza aynı gün gönderme.
+### Liste değişimi neden sınırda?
 
----
-
-## 7. Saat — sessiz ama ölümcül konu
-
-Ucuz stick'lerde pil destekli RTC genelde **yoktur**. Güç kesilince saat sıfırlanır.
-`valid_until` zorlaması saate bağlı olduğu için bu ciddi bir konu.
-
-**Kurallar:**
-
-1. Her senkronda saati düzelt: sunucu yanıtının `Date` başlığı veya manifestteki
-   `server_time`. Ayrı NTP portu açmaya gerek yok.
-2. `last_known_time` + `SystemClock.elapsedRealtime()` çapası diske yazılır; arada geçen
-   süre monotonik sayaçtan hesaplanır.
-3. Açılışta sistem saati `last_known_time`'dan **geriye** gidiyorsa saat **güvenilmez** sayılır.
-4. **Şüphede kalırsan süresi geçmiş say.** Güvenilmez saatte:
-   - `valid_until` geçmiş olabilecek her içerik **oynatılmaz**
-   - `valid_from` gelecekte olabilecek içerik **başlatılmaz**
-   - **evergreen** içerik oynatılır (süresi hiç dolmaz)
-5. Log kayıtlarına `clock_trusted` alanı eklenir; rapor üretirken güvenilmez saatli
-   kayıtlar işaretlenir.
-
-**Neden önemli:** süresi bitmiş ücretli bir reklamı oynatmaya devam etmek, sözleşmesi
-bitmiş envanter yayınlamak demek. İptal edilmiş bir reklam için de aynısı geçerli.
-Bu ticari ve hukuki risk — kod tarafında sert kural olarak dursun.
+`setMediaItems` çağrısı oynatıcıyı yeniden hazırlar; bu, içeriğin ortasında yapılırsa
+görünür bir kesinti olur. İçerik sınırında yapıldığında kesinti yalnızca hazırlık
+süresidir (~100–300 ms siyah), üstelik günde en fazla birkaç kez.
 
 ---
 
-## 8. Sunucu API'si
+## 7. Saat
 
-| Yöntem | Yol | İş |
-|---|---|---|
-| `GET` | `/api/v1/manifest?device=<id>` | Cihaz grubuna göre imzalı manifest |
-| `GET` | `/content/<sha>.mp4` | İçerik (Range zorunlu) |
-| `GET` | `/app/reklam-<v>.apk` | Uygulama APK'sı (Range) |
-| `POST` | `/api/v1/logs` | gzip NDJSON oynatma logu → en yüksek ACK'lenen `seq` döner |
-| `POST` | `/api/v1/heartbeat` | Sürüm, disk, sinyal, sıcaklık, son hata, tamamlanma oranı |
-| `POST` | `/api/v1/screenshot` | Periyodik ekran görüntüsü (haftada 2–3) |
+`clock/ClockManager.kt`
 
-**Kimlik:** cihaz başına `Bearer` token, provizyonda yazılır. Token iptal edilebilir olsun.
+Ucuz stick'lerde pil destekli RTC genelde **yoktur**; güç kesilince saat sıfırlanır.
 
-**Oynatma logu satırı (NDJSON):**
+- Her senkronda sunucunun **`Date` başlığından** gerçek zaman alınır
+- Araya geçen süre **monotonik** sayaçla (`elapsedRealtime`) hesaplanır
+- Cihaz yeniden başlarsa monotonik çapa sıfırlanır → saat **şüpheli**
+- Şüpheliyken kural: **"süresi geçmiş say, oynatma"** → evergreen'e düşülür
 
-```json
-{"seq":12345,"item_id":"kahve_kampanya_30","sha256":"a1b2c3...","started_at":"2026-09-26T08:14:02Z","duration_ms":30000,"completed":true,"playlist_version":128,"screen_on":true,"clock_trusted":true}
-```
+### Date başlığı neden gövdedeki `serverTime`'dan öncelikli
 
-Sunucu `(device_id, seq)` ile tekrarları ayıklar. Cihaz, ACK gelene kadar logu **silmez**.
+Nokta önbelleği (`proxy_cache_use_stale`) PtMP linki koptuğunda **bayat manifest**
+servis eder. O manifestin gövdesindeki `serverTime` saatlerce eski olabilir; ona
+güvenirsek cihazın saati **geriye gider** ve süresi dolmuş reklamlar yeniden
+geçerli hale gelir. `Date` başlığını ise her zaman son atlayan sunucu üretir.
 
 ---
 
-## 9. Önbellek kutusu (her nokta)
+## 8. Uygulamanın kendini güncellemesi
 
-```nginx
-# Aynalama yaklaşımı (ÖNERİLEN): içerik rsync ile yerelde, PtMP kopsa bile çalışır
-server {
-    listen 80;
-    root /srv/reklam;
-    location /content/ { }            # Range nginx'te varsayılan olarak çalışır
-    location /app/     { }
-    location /api/     { proxy_pass http://merkez; }   # log/heartbeat ileri taşır
-}
-```
+`update/Updater.kt` — device owner + `PackageInstaller` → onay ekranı **açılmaz**.
+
+Bu özellik opsiyonel değil: 4G yok, cihazlara noktaya gelmeden erişilemiyor.
+Sessiz güncelleme olmazsa her küçük düzeltme için 50 otobüse fiziksel olarak
+gitmek gerekir — projenin çözmeye çalıştığı problem tam olarak buydu.
+
+- Kademeli yayım: `rolloutGroup` (cihaz grubu ≤ eşik ise günceller)
+- Kurulumdan önce çalışan APK `app/known-good.apk` olarak saklanır
+- Açılış sağlık sayacı: açılışta artar, 2 dk sağlıklı çalışınca sıfırlanır;
+  3 başarısız açılışta saklanan sürüme dönülür
+
+**Dürüst sınır:** uygulama süreç başlamadan çöküyorsa bu kod hiç çalışmaz.
+Gerçek koruma **kademeli yayımdır**.
+
+**Tüm sürümler aynı anahtarla imzalanmalı**, yoksa `PackageInstaller` reddeder.
+
+---
+
+## 9. Oynatma kanıtı
+
+`player/PlaybackLogger.kt`, `telemetry/Telemetry.kt`
+
+- Her oynatma Room'a satır olarak yazılır; `seq` otomatik artar ve kalıcıdır
+- Toplu gzip NDJSON olarak gönderilir; **ACK alınmadan satır silinmez**
+- Sunucu tekrarları `(cihaz, seq)` ile eler
+- `clockTrusted` alanı taşınır: saati şüpheli cihazdan gelen kayıt raporda
+  ayrı sütunda gösterilir, denetimde tartışma çıkmaz
+- Raporda yalnızca **tamamlanmış** oynatmalar sayılır
+
+### Ekran görüntüsü neden yok — dürüst sınır
+
+Normal bir Android uygulaması ekranın **gerçek görüntüsünü sessizce alamaz**:
+`MediaProjection` kullanıcı onay diyaloğu açar (sahada kimse basmaz),
+`CAPTURE_VIDEO_OUTPUT` ise imza seviyesi bir izindir. Device owner olmak da
+bunu değiştirmez.
+
+Bunun yerine **kanıt karesi** gönderiliyor: oynatılan dosyadan bir kare çıkarılıp
+üzerine cihaz kimliği ve zaman damgası yazılıyor (günde en fazla bir kez).
+
+- **Kanıtladığı:** o içeriğin o cihazda o saatte oynatıldığı
+- **Kanıtlamadığı:** TV'nin açık olduğu
+
+TV'nin açıklığını yazılımdan güvenilir ölçmek mümkün değil (çoğu TV kapalıyken de
+HDMI +5V'u sürer). Reklamverene verilen raporda bu sınır açıkça belirtilmeli;
+ekranın gerçekten çalıştığı saha denetimiyle doğrulanır.
+
+### HDMI-CEC de uygulamadan yapılamıyor
+
+`HdmiControlManager` bir sistem API'sidir; uygulama TV'yi açamaz. Pratik çözüm:
+CEC'i cihaz ayarlarından açın, TV'yi "son girişe aç" moduna alın ve TV'yi kontak
+hattına bağlayın — çoğu otobüste TV zaten kontakla açılıyor.
+
+---
+
+## 10. Device owner — atlanamaz
+
+`admin/DeviceAdmin.kt`
+
+Üç şey buna bağlı:
+
+1. **Sessiz APK güncellemesi** (bkz. §8)
+2. **WiFi'ye sessizce bağlanma** — Android 10+ hedefleyen normal uygulamada
+   `WifiManager.addNetwork` **her zaman -1 döner**; DO/PO/sistem uygulamaları muaf
+3. **Kiosk kilidi, durum çubuğunu kapatma, uzaktan reboot**
 
 ```bash
-# cron: gece + her saat
-rsync -a --delete merkez:/srv/reklam/content/ /srv/reklam/content/
-rsync -a          merkez:/srv/reklam/manifest/ /srv/reklam/manifest/
+adb shell dpm set-device-owner com.otobusreklam.player/.admin.AdminReceiver
 ```
 
-**Alternatif:** aynalama yerine `proxy_cache` + `slice 1m`. nginx'in slice modülü tam bu
-iş için var (büyük, yayınlandıktan sonra değişmeyen video dosyaları); `$slice_range`
-mutlaka `proxy_cache_key`'e girmeli. **Ama aynalama daha sağlam** — link koptuğunda nokta
-kendi başına ayakta kalır.
+Cihaza hesap eklendiyse bu komut başarısız olur → fabrika ayarları gerekir.
+Bu yüzden stick'i kutudan çıkarınca **ilk iş** budur.
 
-**Log kuyruğu:** kutu, otobüsten aldığı logları diske alıp merkeze sonra iletsin
-(store-and-forward). PtMP koptuğunda log kaybı olmaz.
+**ADB bilinçli olarak açılmıyor:** 50 cihazda kalıcı açık ADB, paylaşılan AP
+VLAN'ında herkesin cihaza bağlanabilmesi demektir. Servis gerektiğinde teknisyen
+ilgili cihazda elle açar.
+
+### Provizyon alıcısının güvenliği
+
+`ProvisionReceiver` exported olmak zorunda (`adb shell` başka bir uygulamadır),
+ama iki katmanla korunuyor:
+
+1. Yalnızca cihaz **henüz provizyonlanmamışken** kabul eder
+2. `PROVISION_SECRET` eşleşmezse reddeder (sabit zamanlı karşılaştırma)
+
+Provizyon bittikten sonra her yayın sessizce yok sayılır.
 
 ---
 
-## 10. Provizyon (her stick için, sırayla)
+## 11. Neden düz HTTP
 
-```bash
-# 1) Cihaz KUTUDAN YENİ / fabrika ayarında, HİÇ HESAP EKLENMEMİŞ olmalı
-adb devices
+Önbellek kutusu kapalı bir VLAN'da. 50 cihaza sertifika/güven deposu dağıtmanın
+işletme yükü büyük; karşılığında kazanılan tek şey **gizlilik** — reklam
+videolarının gizli bir yanı yok.
 
-# 2) Uygulamayı kur
-adb install reklam-app.apk
+**Bütünlük** ayrı mekanizmayla zaten sağlanıyor: manifest Ed25519 imzalı, her
+parça SHA-256 ile doğrulanıyor. Ağda biri araya girse bile cihaza sahte içerik
+yükleyemez, yalnızca trafiği izleyebilir.
 
-# 3) Device Owner yap  (hesap eklendiyse BU KOMUT BAŞARISIZ OLUR → fabrika ayarı)
-adb shell dpm set-device-owner com.sirket.reklam/.AdminReceiver
-
-# 4) Cihaz kimliği + token + sunucu adresi + WiFi bilgisi yaz
-adb shell am broadcast -a com.sirket.reklam.PROVISION \
-  --es device_id "OTOBUS-014" --es token "..." --es base_url "http://nokta.local" \
-  --es ssid "..." --es psk "..."
-
-# 5) Kütüphaneyi ön-yükle (sahaya dolu gitsin)
-adb push content/ /sdcard/reklam-preload/
-
-# 6) Doğrula: kiosk açıldı mı, WiFi'ye kendi bağlanıyor mu, oynatma başladı mı
-```
-
-**Provizyon kontrol listesi (her cihaz):**
-
-- [ ] Device Owner başarılı (`dpm` komutu OK döndü)
-- [ ] Uygulama HOME launcher, açılışta otomatik geliyor
-- [ ] Kiosk (lock task) aktif, durum çubuğu kapalı
-- [ ] WiFi profili kayıtlı, cihaz ağa **kendi** bağlanıyor
-- [ ] Ayrı 5 V / 2 A besleme bağlı — **TV USB'sinden DEĞİL**
-- [ ] HDMI-CEC ile TV açılıyor, doğru girişe geçiyor
-- [ ] Kütüphane ön-yüklü, evergreen içerik oynuyor
-- [ ] Cihaz panelde görünüyor, heartbeat geliyor
-- [ ] Cihaz kilitli kutuda, dışarıda erişilebilir port yok
+Merkez sunucu internete açılacaksa HTTPS kullanın ve
+`res/xml/network_security_config.xml` içindeki `cleartextTrafficPermitted`'ı
+`false` yapın.
 
 ---
 
-## 11. Uygulama modül yapısı (öneri)
+## 12. Kırma testleri (pilotta bunları bilerek yapın)
 
-```
-app/
-├── player/        Media3 kurulumu, liste oluşturma, daypart filtresi, watchdog
-├── sync/          NetworkCallback, SyncService, indirme motoru (Range + parça + hash)
-├── manifest/      JSON model, Ed25519 imza doğrulama, atomik geçiş
-├── store/         Room (items, chunks, play_log, device_state), dosya yönetimi
-├── clock/         saat senkronu, güvenilirlik kararı
-├── update/        APK indirme + PackageInstaller (Device Owner sessiz kurulum)
-├── admin/         DeviceAdminReceiver, lock task, reboot, WiFi profili
-├── telemetry/     heartbeat, log paketleme (gzip NDJSON), ekran görüntüsü
-└── provision/     provizyon broadcast alıcısı, ön-yükleme içe alma
-```
-
----
-
-## 12. Test edilmesi gerekenler (pilotta bunları bilerek kır)
-
-- [ ] İndirmenin **tam ortasında** WiFi'yi kes → sonraki bağlantıda kaldığı yerden devam ediyor mu?
-- [ ] Cihazın **fişini çek** (indirme sırasında) → açılışta veri bozulması var mı, devam ediyor mu?
-- [ ] Manifest imzasını **bilerek boz** → cihaz reddediyor ve eski listeyi çalmaya devam ediyor mu?
-- [ ] Bir videoyu **bozuk gönder** → o öğe atlanıp döngü devam ediyor mu?
-- [ ] Sistem saatini **2 yıl geriye al** → süresi geçmiş içerik oynamıyor, evergreen'e düşüyor mu?
-- [ ] 10 cihazı **aynı anda** aynı AP'ye bindir → kademeli başlama çalışıyor mu, kaç MB iniyor?
-- [ ] **Bozuk bir APK** yayımla (rollout_group 1) → geri dönüş çalışıyor mu?
-- [ ] TV'yi kapat → stick ayakta mı, senkron oluyor mu, log tutuyor mu?
-- [ ] Önbellek kutusunu kapat → cihaz mevcut içerikle çalışmaya devam ediyor mu?
-- [ ] 72 saat senkron yok → panelde uyarı düştü mü?
+- [ ] İndirmenin **tam ortasında** WiFi'yi kesin → sonraki bağlantıda kaldığı yerden devam ediyor mu?
+- [ ] İndirme sırasında **fişi çekin** → açılışta veri bozulması var mı, devam ediyor mu?
+- [ ] Manifest imzasını **bilerek bozun** (yanlış `MANIFEST_PUBLIC_KEY` ile derleyin) → cihaz reddedip eski listeyi çalmaya devam ediyor mu?
+- [ ] Bir videoyu **bozuk gönderin** → o öğe atlanıp döngü devam ediyor mu, `BAD` işaretleniyor mu?
+- [ ] Sistem saatini **2 yıl geriye alın** → süresi geçmiş içerik oynamıyor, evergreen'e düşüyor mu?
+- [ ] **10 cihazı aynı anda** aynı AP'ye bindirin → kademeli başlatma çalışıyor mu, pencerede kaç MB iniyor?
+- [ ] **Bozuk bir APK** yayımlayın (rolloutGroup 1) → sadece o gruba gitti mi, geri dönüş çalıştı mı?
+- [ ] **TV'yi kapatın** → stick ayakta mı, senkron oluyor mu? (TV USB'sinden besleniyorsa DEĞİL)
+- [ ] **Önbellek kutusunu kapatın** → cihaz mevcut içerikle çalışmaya devam ediyor mu?
+- [ ] **PtMP linkini kesin** → kutu bayat manifest servis ediyor mu, saat geriye gitmiyor mu?
+- [ ] 72 saat senkron yok → panelde "bayat" uyarısı düştü mü?

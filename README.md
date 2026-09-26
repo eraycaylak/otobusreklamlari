@@ -2,8 +2,38 @@
 
 USB bellek taşımayı bitiren, kendi uygulamamızla çalışan merkezi yayın sistemi.
 
-**Ayrıntılar:**
-[`docs/plan.md`](docs/plan.md) · [`docs/uygulama-spec.md`](docs/uygulama-spec.md) · [`docs/saha-kurulum.md`](docs/saha-kurulum.md)
+**Belgeler:**
+[Kurulum ve çalıştırma](docs/kurulum-calistirma.md) ·
+[Uygulama mimarisi](docs/uygulama-spec.md) ·
+[Genel plan](docs/plan.md) ·
+[Saha kurulumu](docs/saha-kurulum.md)
+
+```
+sunucu/            Merkez sunucu + yönetim paneli (Node.js, native bağımlılık yok)
+android/           Otobüs oynatıcısı (Kotlin, Media3, Room)
+onbellek-kutusu/   Nokta önbellek kutusu (nginx + rsync)
+tools/             Cihaz uygunluk kontrolü ve provizyon betikleri
+docs/              Belgeler
+```
+
+## Hızlı başlangıç
+
+```bash
+# 1) Merkez sunucu
+cd sunucu && npm install && npm run anahtar-uret
+ADMIN_TOKEN="uzun-rastgele-bir-dize" npm start     # panel: http://localhost:8080
+npm test                                            # 13 uçtan uca test
+
+# 2) Android
+#    gradle.properties içine MANIFEST_PUBLIC_KEY ve PROVISION_SECRET yazın
+cd android && ./gradlew assembleRelease
+
+# 3) Cihaz  (kutudan yeni / fabrika ayarında, HİÇ hesap eklenmemiş olmalı)
+./tools/cihaz-kontrol.sh
+./tools/provizyon.sh OTOBUS-014 --sunucu http://10.20.0.10 --ssid "REKLAM-AP" --psk "..." \
+   --admin-token "$TOKEN" --apk android/app/build/outputs/apk/release/app-release.apk \
+   --secret "..."
+```
 
 ---
 

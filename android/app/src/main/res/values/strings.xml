@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Otobüs Reklam</string>
+    <string name="sync_channel">İçerik senkronu</string>
+    <string name="sync_running">İçerik güncelleniyor…</string>
+</resources>

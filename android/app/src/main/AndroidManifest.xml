@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 10+ da baglanilan aginin SSID'sini okumak icin konum izni gerekiyor.
+         Cihaz sahibi (device owner) oldugumuz icin bu izni kendimize veriyoruz. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Android TV stick: dokunmatik ekran ve leanback zorunlu degil -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="true" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:banner="@drawable/ic_banner"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.Oynatici">
+
+        <!--
+          PlayerActivity HEM launcher HEM HOME.
+          HOME olmasi kritik: uygulama cokerse Android HOME'u yeniden baslatir,
+          yani sistem bize bedava bir watchdog saglar. Cihaz sahibi olarak
+          addPersistentPreferredActivity ile bu secim kalici hale getiriliyor.
+        -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Oynatici">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".sync.SyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".boot.BootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Cihaz sahibi alicisi. dpm set-device-owner bu bileseni hedefler.
+        -->
+        <receiver
+            android:name=".admin.AdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Provizyon alicisi.
+          GUVENLIK: exported olmak zorunda (adb shell am broadcast ile cagriliyor),
+          ama iki katmanla korunuyor:
+            1) Sadece cihaz HENUZ PROVIZYONLANMAMISKEN kabul eder
+            2) BuildConfig.PROVISION_SECRET ile eslesmeyen yayini reddeder
+          Provizyon tamamlandiktan sonra tum yayinlar sessizce yok sayilir.
+        -->
+        <receiver
+            android:name=".provision.ProvisionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.otobusreklam.player.PROVISION" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Sessiz APK kurulumunun sonucunu almak icin -->
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

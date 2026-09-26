@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:keepScreenOn="true">
+
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/playerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:use_controller="false"
+        app:resize_mode="fill"
+        app:surface_type="surface_view"
+        app:shutter_background_color="@android:color/black" />
+
+    <!--
+      Teshis katmani. Normalde GORUNMEZ.
+      Uzaktan bir komutla veya uzun basisla acilir; sahada teknikerin "bu cihaz
+      hangi surumde, en son ne zaman senkron oldu" sorusunu ekrandan cevaplar.
+    -->
+    <TextView
+        android:id="@+id/diag"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:textColor="#80FFFFFF"
+        android:background="#60000000"
+        android:visibility="gone"
+        tools:ignore="HardcodedText" />
+</FrameLayout>

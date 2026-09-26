@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Duz HTTP'ye neden izin veriyoruz:
+
+  Onbellek kutusu toplanma noktasinda, kapali bir VLAN'da duruyor. Ona sertifika
+  kurmak (ve 50 cihaza guven deposu dagitmak) buyuk bir isletme yuku; karsiliginda
+  kazanilan tek sey GIZLILIK - reklam videolarinin gizli bir yani yok.
+
+  BUTUNLUK ayri bir mekanizmayla zaten saglaniyor: manifest Ed25519 ile imzali ve
+  her parca SHA-256 ile dogrulaniyor. Yani ag uzerinde biri araya girse bile
+  cihaza sahte/degistirilmis reklam yukleyemez - sadece trafigi izleyebilir.
+
+  Merkez sunucu internete acilacaksa HTTPS kullanin; o zaman burayi false yapin.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
