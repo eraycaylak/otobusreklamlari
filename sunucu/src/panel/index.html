@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Otobüs Reklam Paneli</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--fg:#e8eaed;--dim:#9aa3b2;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#4493f8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  h1{font-size:16px;margin:0;font-weight:600}
+  main{padding:20px;max-width:1400px;margin:0 auto;display:grid;gap:20px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+  h2{font-size:14px;margin:0 0 12px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:500}
+  input,select,button,textarea{background:#0d0f14;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:inherit}
+  button{cursor:pointer;background:var(--acc);border-color:var(--acc);color:#fff;font-weight:500}
+  button.sec{background:transparent;color:var(--fg);border-color:var(--line)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .ok{background:var(--ok)}.warn{background:var(--warn)}.bad{background:var(--bad)}
+  .dim{color:var(--dim)}
+  code{background:#0d0f14;padding:1px 5px;border-radius:4px;font-size:12px}
+  #log{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);max-height:160px;overflow:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>Otobüs Reklam Paneli</h1>
+  <input id="token" type="password" placeholder="admin token" style="width:240px">
+  <button onclick="init()">Bağlan</button>
+  <span id="ver" class="dim"></span>
+</header>
+<main>
+  <section>
+    <h2>Cihazlar</h2>
+    <div class="row">
+      <input id="dId" placeholder="OTOBUS-014" style="width:150px">
+      <input id="dLabel" placeholder="plaka / etiket" style="width:150px">
+      <input id="dGroup" placeholder="grup (hat-14)" style="width:130px">
+      <button onclick="addDevice()">Cihaz ekle</button>
+    </div>
+    <table><thead><tr>
+      <th>durum</th><th>cihaz</th><th>grup</th><th>son senkron</th><th>liste</th>
+      <th>içerik</th><th>uygulama</th><th>disk</th><th>sinyal</th><th>saat</th><th>son hata</th>
+    </tr></thead><tbody id="devices"></tbody></table>
+  </section>
+
+  <section>
+    <h2>İçerik yükle</h2>
+    <div class="row">
+      <input id="file" type="file" accept="video/*">
+      <button onclick="upload()">Yükle ve sıkıştır</button>
+      <span class="dim">Sunucu 2,5 Mbps H.264'e çevirir (50 MB → ~10 MB)</span>
+    </div>
+    <div id="log"></div>
+  </section>
+
+  <section>
+    <h2>Kampanyalar</h2>
+    <div class="row">
+      <select id="cItem" style="width:280px"></select>
+      <input id="cTitle" placeholder="başlık" style="width:150px">
+      <input id="cAdv" placeholder="reklamveren" style="width:150px">
+      <input id="cFrom" type="datetime-local" title="yayına giriş">
+      <input id="cUntil" type="datetime-local" title="bitiş (zorunlu)">
+      <input id="cWeight" type="number" min="1" value="1" style="width:70px" title="ağırlık">
+      <input id="cGroups" placeholder="gruplar (virgülle)" style="width:150px">
+      <label class="dim"><input id="cEver" type="checkbox"> evergreen</label>
+      <button onclick="addCampaign()">Kaydet</button>
+    </div>
+    <p class="dim" style="margin:0 0 10px">
+      Bitiş tarihi zorunlu: 4G olmadığı için uzaktan anlık kaldırma kanalı yok, reklam kendi kendine düşmeli.
+      Yayına girişi <strong>24–48 saat önceye</strong> verin ki tüm otobüsler indirebilsin.
+    </p>
+    <table><thead><tr><th>kampanya</th><th>reklamveren</th><th>başlangıç</th><th>bitiş</th><th>ağırlık</th><th>gruplar</th><th>tip</th><th></th></tr></thead><tbody id="campaigns"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Uygulama sürümü (kademeli yayım)</h2>
+    <div class="row">
+      <input id="apk" type="file" accept=".apk">
+      <input id="vCode" type="number" placeholder="versionCode" style="width:130px">
+      <input id="vName" placeholder="versionName" style="width:130px">
+      <input id="vRollout" type="number" value="1" style="width:90px" title="rollout grubu">
+      <button onclick="uploadApk()">Yayımla</button>
+      <button class="sec" onclick="expandRollout()">Tüm cihazlara aç</button>
+    </div>
+    <div id="appInfo" class="dim"></div>
+  </section>
+
+  <section>
+    <h2>Oynatma kanıtı raporu</h2>
+    <div class="row">
+      <input id="rFrom" type="date"><input id="rTo" type="date">
+      <button onclick="report()">CSV indir</button>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

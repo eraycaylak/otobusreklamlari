@@ -1,0 +1,21 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Sunucu verileri (icerik, loglar, ANAHTARLAR - asla commit edilmez)
+sunucu/data/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Sistem
+.DS_Store
+*.swp
