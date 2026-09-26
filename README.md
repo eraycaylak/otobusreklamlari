@@ -22,11 +22,13 @@ docs/              Belgeler
 # 1) Merkez sunucu
 cd sunucu && npm install && npm run anahtar-uret
 ADMIN_TOKEN="uzun-rastgele-bir-dize" npm start     # panel: http://localhost:8080
-npm test                                            # 13 uçtan uca test
+npm test                                            # 24 test (uçtan uca + güvenlik)
 
 # 2) Android
 #    gradle.properties içine MANIFEST_PUBLIC_KEY ve PROVISION_SECRET yazın
-cd android && ./gradlew assembleRelease
+cd android
+./gradlew testDebugUnitTest                         # 36 birim testi
+./gradlew assembleRelease
 
 # 3) Cihaz  (kutudan yeni / fabrika ayarında, HİÇ hesap eklenmemiş olmalı)
 ./tools/cihaz-kontrol.sh
@@ -99,3 +101,17 @@ hızı neredeyse önemsizleşir.
 | **3 — Ticarileştirme** | sonrası | Oynatma kanıtı raporu, reklamveren paneli, faturalama |
 
 Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda girişme.
+
+---
+
+## Testler
+
+| Ne | Nerede | Kapsam |
+|---|---|---|
+| **Sunucu — 24 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, log tekilleştirme, CSV enjeksiyonu, oran sınırı, kimlik doğrulaması |
+| **Android — 36 test** | `android/app/src/test/` | Saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama, monotonik saat, indirme önceliği, **sunucuyla kademeli yayım hash uyumu** |
+| **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
+
+Android'deki saf mantık (`Daypart`, `Weighting`, `ClockMath`, `SyncPlan`, `RolloutGroup`)
+bilerek Android API'lerinden bağımsız tutuldu — emülatör veya Robolectric olmadan
+doğrudan JVM'de test edilebiliyor.

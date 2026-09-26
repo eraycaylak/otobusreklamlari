@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (13 test, Range ile devam eden indirme senaryosu dahil):
+Testleri çalıştırın (24 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
 
 ```bash
 npm test
@@ -164,13 +164,27 @@ keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
 
 `android/app/build.gradle.kts` içindeki `release` bloğuna `signingConfig` ekleyin.
 
-### 4.3 Derleyin
+### 4.3 Test edin ve derleyin
 
 ```bash
 cd android
+
+# 36 birim testi: saat aralıkları, ağırlıklı sıralama, saat mantığı,
+# indirme önceliği ve sunucuyla kademeli yayım hash uyumu
+./gradlew testDebugUnitTest
+
 ./gradlew assembleRelease
 # -> app/build/outputs/apk/release/app-release.apk
 ```
+
+> İlk çalıştırmada Gradle kendini indirir (`gradle/wrapper/gradle-wrapper.properties`).
+> Ayrı bir Gradle kurulumuna gerek yok.
+
+### 4.4 CI
+
+`.github/workflows/ci.yml` her push'ta sunucu testlerini, Android birim testlerini,
+lint'i, debug APK derlemesini ve shellcheck'i çalıştırır; APK'yı artifact olarak
+yükler. Yerelde Android SDK kurmak istemiyorsanız APK'yı CI çıktısından indirebilirsiniz.
 
 ---
 
