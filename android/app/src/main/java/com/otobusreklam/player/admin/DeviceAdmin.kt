@@ -115,6 +115,29 @@ class DeviceAdmin(private val context: Context) {
         val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: return false
 
+        /*
+         * IZIN ONCE KONTROL EDILIYOR - lint bunu hakli olarak istiyor.
+         *
+         * configuredNetworks/addNetwork, ACCESS_FINE_LOCATION olmadan SecurityException
+         * firlatir. Izni applyPolicies() cihaz sahibi yetkisiyle otomatik veriyor, ama
+         * SIRA GARANTILI DEGIL: provizyon yolunda applyPolicies hemen once cagriliyor,
+         * BootReceiver'da da oyle - yine de cihaz sahibi olmadigimiz (ya da yetkinin
+         * elle kaldirildigi) bir ROM'da bu cagri patlar.
+         *
+         * Istisna zaten runCatching ile yakalaniyordu, yani uygulama cokmuyordu - ama
+         * sonuc "WiFi yazilamadi" olarak gorunup SEBEBI kayboluyordu. Izin yoksa acikca
+         * soyluyoruz: sahada "neden aga baglanmiyor?" sorusunun ilk kontrol noktasi bu.
+         */
+        val izin = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        if (izin != PackageManager.PERMISSION_GRANTED) {
+            Log.e(
+                TAG,
+                "ACCESS_FINE_LOCATION YOK - WiFi profili yazilamaz. " +
+                    "Cihaz sahibi miyiz? (isDeviceOwner=$isDeviceOwner) applyPolicies() izni otomatik verir."
+            )
+            return false
+        }
+
         return runCatching {
             if (!wm.isWifiEnabled) wm.setWifiEnabled(true)
 
@@ -145,7 +168,13 @@ class DeviceAdmin(private val context: Context) {
             runCatching { wm.saveConfiguration() }
             true
         }.getOrElse {
-            Log.e(TAG, "WiFi profili yazilamadi", it)
+            // SecurityException ayri raporlanir: "izin yok" ile "ROM reddetti" farkli
+            // sorunlar ve sahada farkli mudahale gerektiriyor.
+            if (it is SecurityException) {
+                Log.e(TAG, "WiFi profili yazilamadi: IZIN REDDEDILDI (SecurityException)", it)
+            } else {
+                Log.e(TAG, "WiFi profili yazilamadi", it)
+            }
             false
         }
     }

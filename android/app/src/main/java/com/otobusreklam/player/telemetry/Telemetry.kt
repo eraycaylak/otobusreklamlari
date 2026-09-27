@@ -263,12 +263,26 @@ class Telemetry(
         }
     }
 
+    /**
+     * WiFi sinyal seviyesi - panelde "bu otobus noktada zayif mi cekiyor?" sorusu icin.
+     *
+     * Izin ACIKCA kontrol ediliyor: connectionInfo, ACCESS_FINE_LOCATION olmadan
+     * SecurityException firlatir. Yakalamak yeterli degil - sinyal olmayan bir alan,
+     * "sinyal yok" ile "izin yok" arasinda ayrim yapmadigi icin yaniltici olur.
+     * SecurityException'i da ayrica yakaliyoruz: her ROM ayni davranmiyor.
+     */
     @Suppress("DEPRECATION")
-    private fun wifiRssi(): Int? = try {
-        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        wm?.connectionInfo?.rssi
-    } catch (_: Exception) {
-        null
+    private fun wifiRssi(): Int? {
+        val izin = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        if (izin != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
+        return try {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wm?.connectionInfo?.rssi
+        } catch (_: SecurityException) {
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private companion object {

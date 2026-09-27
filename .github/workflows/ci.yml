@@ -81,6 +81,17 @@ jobs:
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret
 
+      # Lint hatasi verdiginde Gradle'in konsol ciktisi ic ice giriyor ve hatalarin
+      # bir kismi kayboluyor. Tam metin raporu her zaman diskte: basarisizlikta
+      # oldugu gibi basiyoruz, yoksa "2 hata var" deyip hangileri oldugunu
+      # gostermeyen bir log ile kaliyoruz.
+      - name: Lint raporunu yazdir
+        if: failure()
+        working-directory: android
+        run: |
+          R=app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          test -f "$R" && cat "$R" || echo "lint metin raporu bulunamadi: $R"
+
       - name: APK derle (debug)
         working-directory: android
         run: >
