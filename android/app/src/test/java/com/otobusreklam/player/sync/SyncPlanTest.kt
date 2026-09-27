@@ -6,8 +6,15 @@ import org.junit.Test
 
 class SyncPlanTest {
 
-    private fun need(id: String, evergreen: Boolean = false, validFrom: Long? = null, remaining: Long = 10_000_000L) =
-        SyncPlan.Need(id, evergreen, validFrom, remaining)
+    private fun need(
+        id: String,
+        evergreen: Boolean = false,
+        validFrom: Long? = null,
+        validUntil: Long? = null,
+        remaining: Long = 10_000_000L
+    ) = SyncPlan.Need(id, evergreen, validFrom, validUntil, remaining)
+
+    private val simdi = 1_800_000_000_000L
 
     @Test fun `evergreen her seyden once iner`() {
         // Ekranin bos kalma riski, en acil kampanyadan bile onceliklidir.
@@ -89,5 +96,75 @@ class SyncPlanTest {
 
     @Test fun `hicbir is yoksa liste bos`() {
         assertTrue(SyncPlan.order(emptyList(), appUpdate = false, appCritical = false).isEmpty())
+    }
+
+    // ------------------------------------------------- suresi bitmis icerik
+
+    /**
+     * Siralama yalnizca `validFrom` artan sirada yapildiginda, suresi BITMIS bir
+     * kampanyanin validFrom'u tanimi geregi cok geride oldugu icin listenin EN BASINA
+     * geciyordu: 3 dakikalik pencere, cihazda ASLA oynatilamayacak (Eligibility zaten
+     * reddediyor) bir dosyaya harcaniyordu - her ziyarette yeniden, cunku dosya bir
+     * daha hazir olmuyor.
+     */
+    @Test fun `suresi bitmis kampanya EN SONA atilir`() {
+        val out = SyncPlan.order(
+            listOf(
+                // validFrom cok geride: eski siralamada EN BASA gecerdi
+                need("bitmis", validFrom = 1L, validUntil = simdi - 1, remaining = 1L),
+                need("gecerli", validFrom = simdi + 1000, validUntil = simdi + 99_000)
+            ),
+            appUpdate = false, appCritical = false, nowMs = simdi
+        )
+        assertEquals(listOf("gecerli", "bitmis"), out)
+    }
+
+    @Test fun `suresi bitmis icerik LISTEDEN SILINMEZ, sadece sona gider`() {
+        // Yer kalirsa insin: silmek, tarih uzatildiginda bastan indirmek olurdu.
+        val out = SyncPlan.order(
+            listOf(need("bitmis", validUntil = simdi - 1)),
+            appUpdate = false, appCritical = false, nowMs = simdi
+        )
+        assertEquals(listOf("bitmis"), out)
+    }
+
+    /**
+     * Saat supheliyken "suresi bitmis" karari guvenilir DEGILDIR. O durumda suzgeci
+     * hic uygulamiyoruz: yanlis bir saat yuzunden gecerli bir kampanyayi en sona
+     * atmak, saat duzeldiginde oynatacak dosya birakmamak olurdu.
+     */
+    @Test fun `saat supheliyken tarih suzgeci UYGULANMAZ`() {
+        val out = SyncPlan.order(
+            listOf(
+                need("bitmis", validFrom = 1L, validUntil = simdi - 1, remaining = 1L),
+                need("gecerli", validFrom = simdi + 1000)
+            ),
+            appUpdate = false, appCritical = false, nowMs = 0L
+        )
+        // Eski (tarih suzgecsiz) siralama: validFrom'u en yakin olan once
+        assertEquals(listOf("bitmis", "gecerli"), out)
+    }
+
+    @Test fun `suresi bitmis EVERGREEN sona atilmaz`() {
+        // Evergreen'in suresi yoktur; validUntil dolu gelse bile ekranin son guvencesi.
+        val out = SyncPlan.order(
+            listOf(
+                need("kampanya", validFrom = simdi),
+                need("evergreen", evergreen = true, validUntil = simdi - 1)
+            ),
+            appUpdate = false, appCritical = false, nowMs = simdi
+        )
+        assertEquals(listOf("evergreen", "kampanya"), out)
+    }
+
+    @Test fun `bitmis olanlar kendi aralarinda kucukten buyuge`() {
+        val out = SyncPlan.order(
+            listOf(
+                need("b-buyuk", validUntil = simdi - 1, remaining = 9_000_000L),
+                need("b-kucuk", validUntil = simdi - 1, remaining = 1_000L)
+            ),
+            appUpdate = false, appCritical = false, nowMs = simdi
+        )
+        assertEquals(listOf("b-kucuk", "b-buyuk"), out)
     }
 }

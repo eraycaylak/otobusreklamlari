@@ -56,6 +56,33 @@ async function refresh () {
   const s = await api('/api/admin/state')
   $('ver').textContent = `liste sürümü: ${s.playlistVersion}`
 
+  /*
+   * UYARILAR - sessizce dogru olmak yetmez, GORUNMESI gerekir.
+   *
+   * evergreensizGruplar: evergreen artik grup suzgecine tabi (operatorun secimi
+   *   uygulaniyor). Dogru davranis ama bir grubun hic evergreen'i kalmazsa o hattaki
+   *   otobusler kampanyalari bittigi anda EKRANI BOS kalir - bu sistemin en kotu
+   *   sonucu. Gizlice telafi etmek yerine soyluyoruz.
+   * suresiGecmisKampanyalar: artik manifeste girmiyorlar (pencereyi asla
+   *   oynatilamayacak dosyaya harcamamak icin) ama "acik" gorundukleri surece
+   *   "neden yayinda degil?" sorusunu dogururlar.
+   */
+  const u = s.uyarilar || {}
+  const satirlar = []
+  if (u.evergreensizGruplar?.length) {
+    satirlar.push(`<strong>EVERGREEN YOK:</strong> ${esc(u.evergreensizGruplar.join(', '))} ` +
+      'grubundaki otobüsler, kampanyaları bittiği anda ekranı boş kalır.')
+  }
+  if (u.suresiGecmisKampanyalar?.length) {
+    satirlar.push(`<strong>SÜRESİ GEÇMİŞ ama açık:</strong> ${esc(u.suresiGecmisKampanyalar.join(', '))} ` +
+      '— yayına girmiyorlar; kapatın veya bitiş tarihini uzatın.')
+  }
+  const uy = $('uyarilar')
+  if (uy) {
+    uy.innerHTML = satirlar.map((x) => `<div>${x}</div>`).join('')
+    uy.style.display = satirlar.length ? 'block' : 'none'
+  }
+
   $('devices').innerHTML = s.devices.map((d) => {
     // EKRAN BOS her seyin onunde gelir: reklamveren para odedi, ekran siyah.
     const ekranBos = d.playableItems === 0

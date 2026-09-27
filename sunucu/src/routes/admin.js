@@ -70,7 +70,7 @@ adminRouter.get('/state', (req, res) => {
   const s = db()
   const beats = readHeartbeats()
   const now = Date.now()
-  const maxStaleMs = 72 * 3600 * 1000
+  const maxStaleMs = config.staleHours * 3600 * 1000
 
   const devices = Object.values(s.devices).map((d) => {
     const hb = beats[d.id]
@@ -102,13 +102,54 @@ adminRouter.get('/state', (req, res) => {
       sessionBytes: hb?.sessionBytes ?? null,
       pendingLogs: hb?.pendingLogs ?? null,
       model: hb?.model ?? null,
-      lastError: hb?.lastError ?? null
+      lastError: hb?.lastError ?? null,
+      /*
+       * BU UCU PANEL OKUYOR - state'e konmadigi icin HEP BOS goruniyordu.
+       *
+       * clockNote        : saatin NEDEN supheli oldugu. "saat supheli" tek basina
+       *                    hicbir mudahaleye yol gostermiyor; sebep (yeniden baslatma /
+       *                    imzasiz kaynak / capa 40 gunluk / geriye giden zaman
+       *                    reddedildi) dogrudan ne yapilacagini soyluyor.
+       * lastInstallError : "guncelleme neden gelmedi?" sorusunun tek cevabi. Kurulum
+       *                    sonucu asenkron geldigi icin lastError'dan AYRI tutuluyor.
+       * timezone         : daypart'in hangi dilimde uygulandigi. Cihaz ile sunucu
+       *                    ayrisirsa sabah kusagi yanlis saatte doner ve bu baska
+       *                    hicbir yerde gorunmez.
+       */
+      clockNote: hb?.clockNote ?? null,
+      lastInstallError: hb?.lastInstallError ?? null,
+      timezone: hb?.timezone ?? null
     }
   })
+
+  /*
+   * EVERGREEN KAPSAMI - "ekran bos kalmaz" sozu grup bazinda da tutmali.
+   *
+   * Evergreen artik grup suzgecine tabi (bkz. manifest.js). Dogru davranis ama bir
+   * riski var: bir grubun hic evergreen'i kalmazsa o hattaki otobuslerin ekrani,
+   * kampanyalari bittigi anda BOSALIR. Bu gizlice telafi edilmemeli, GORUNMELI:
+   * panelde uyari olarak cikiyor. Ayni sekilde suresi gecmis ama hala ACIK duran
+   * kampanyalar da bildiriliyor - onlar artik manifeste girmiyor ama panelde
+   * "neden yayinda degil?" sorusunu dogurur.
+   */
+  const gruplar = [...new Set(Object.values(s.devices).filter((d) => !d.revoked).map((d) => d.group || 'default'))]
+  const aktifKampanyalar = Object.values(s.campaigns).filter((c) => c.enabled)
+  const evergreensizGruplar = gruplar.filter((g) => !aktifKampanyalar.some((c) =>
+    c.evergreen && (!Array.isArray(c.groups) || c.groups.length === 0 || c.groups.includes(g))
+  ))
+  const suresiGecmis = aktifKampanyalar
+    .filter((c) => !c.evergreen && c.validUntil && Date.parse(c.validUntil) < now)
+    .map((c) => c.id)
 
   res.json({
     playlistVersion: s.playlistVersion,
     app: s.app,
+    uyarilar: {
+      // Bu gruplardaki otobusler, kampanyalari bittigi anda EKRANI BOS kalir.
+      evergreensizGruplar,
+      // Artik manifeste girmiyorlar; panelde kapatilmalari veya tarih uzatilmali.
+      suresiGecmisKampanyalar: suresiGecmis
+    },
     devices,
     items: Object.values(s.items).map(({ chunks, ...rest }) => ({ ...rest, chunkCount: chunks.length })),
     campaigns: Object.values(s.campaigns)
@@ -234,8 +275,18 @@ adminRouter.post('/device', express.json(), (req, res) => {
   s.devices[b.id] = {
     id: b.id,
     token,
-    label: b.label || b.id,
-    group: b.group || 'default',
+    /*
+     * VAR OLAN ALANLARI EZMEYIN.
+     *
+     * Bu uc alan onceden govdede yoksa VARSAYILANA SIFIRLANIYORDU. Somut zarar:
+     * tokeni yenilemek ya da kanarya atamak icin ayni cihazi yeniden POST etmek
+     *   - grubunu 'default' yapiyor (o otobus artik hattinin kampanyalarini almaz)
+     *   - IPTAL EDILMIS bir cihazi sessizce YENIDEN AKTIF ediyor
+     * Ikincisi bir guvenlik gerilemesi: calinan/sokulen bir stick'i iptal ettikten
+     * sonra dikkatsiz bir yeniden kayit onu tekrar yayina aliyordu.
+     */
+    label: b.label ?? existing?.label ?? b.id,
+    group: b.group ?? existing?.group ?? 'default',
     // Kademeli yayim grubu: uygulama guncellemesi once kucuk gruba gider.
     /*
      * KADEMELI YAYIM GRUBU.
@@ -253,8 +304,8 @@ adminRouter.post('/device', express.json(), (req, res) => {
       ?? existing?.rolloutGroup
       ?? rolloutGroupOf(b.id, config.rolloutGroups),
     rolloutPinned: pozitifTam(b.rolloutGroup) != null ? true : (existing?.rolloutPinned ?? false),
-    note: b.note || '',
-    revoked: !!b.revoked,
+    note: b.note ?? existing?.note ?? '',
+    revoked: b.revoked === undefined ? !!existing?.revoked : !!b.revoked,
     createdAt: existing?.createdAt || new Date().toISOString()
   }
   save()

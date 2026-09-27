@@ -61,13 +61,25 @@ jobs:
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret
 
+      # -------------------------------------------------------------------
+      # LINT ARTIK BLOKLUYOR (continue-on-error KALDIRILDI).
+      #
+      # Sebep somut: minSdk 24 ama kodun bazi yerleri daha yeni API'ler cagiriyor
+      # (PackageInstaller oturum listesi, dpm.setTime, Settings.Global.BOOT_COUNT).
+      # Bunlarin her biri Android 7 bir stick'te NoSuchMethodError ile COKER ve bunu
+      # yalnizca SAHADA, cihaz elimizde olmadan ogrenirdik. Lint'in NewApi kurali tam
+      # bu sinifi yakalar; "continue-on-error" ise onu gormezden geliyordu - yani
+      # elimizdeki tek otomatik koruma kapatilmisti.
+      #
+      # Ayni gerekce diger lint hatalari icin de gecerli: bu cihazlara uzaktan
+      # baglanamiyoruz, dolayisiyla derleme zamaninda yakalanan her sey bedava.
+      # -------------------------------------------------------------------
       - name: Lint
         working-directory: android
         run: >
           ./gradlew --no-daemon :app:lintDebug
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret
-        continue-on-error: true
 
       - name: APK derle (debug)
         working-directory: android

@@ -84,15 +84,36 @@ else
   echo "$CIKTI" | grep -qi 'Success' || hata "device owner atanamadi. Fabrika ayarlarina donup hesap eklemeden tekrar deneyin."
 fi
 
+# ---------------------------------------------------------------------------
+# UZAK KABUK ICIN ALINTILAMA - SESSIZ BOZULMAYI ONLER.
+#
+# `adb shell ...` argumanlari BIRLESTIRIP CIHAZIN sh'ine verir. Yani yerel kabukta
+# "$PSK" yazmak yeterli DEGIL: degeri bir kez daha cihazin kabugu ayristirir.
+# Somut sonuclar:
+#   - bosluk iceren AP parolasi IKI ayri arguman olur -> WiFi profili yanlis yazilir
+#   - $ ` " ' ; | & gibi karakterler cihazda YORUMLANIR -> deger bozulur ya da
+#     komut hic calismaz
+# Ikisi de SESSIZ: yayin "TAMAM" doner (sir dogru geldiyse), cihaz sahaya gider ve
+# aga bir daha hic baglanmaz. Sebep aylarca bulunamaz.
+#
+# AP parolalarinda ozel karakter kullanmak yaygin ve DOGRU bir pratiktir; arac
+# bunu desteklemek zorunda.
+# ---------------------------------------------------------------------------
+alinti() {
+  # POSIX: tek tirnak icine al, icindeki tek tirnaklari '\'' ile kacir
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 adim "5/6  Provizyon yayini"
-SONUC=$(adb shell am broadcast -a com.otobusreklam.player.PROVISION -n "$PROV_ALICI" \
-  --es secret "$SECRET" \
-  --es deviceId "$CIHAZ_ID" \
-  --es token "$TOKEN" \
-  --es baseUrl "$SUNUCU" \
-  --es apiUrl "$SUNUCU" \
-  --es ssid "$SSID" \
-  --es psk "$PSK" 2>&1 | tr -d '\r')
+YAYIN="am broadcast -a com.otobusreklam.player.PROVISION -n $(alinti "$PROV_ALICI")"
+YAYIN="$YAYIN --es secret $(alinti "$SECRET")"
+YAYIN="$YAYIN --es deviceId $(alinti "$CIHAZ_ID")"
+YAYIN="$YAYIN --es token $(alinti "$TOKEN")"
+YAYIN="$YAYIN --es baseUrl $(alinti "$SUNUCU")"
+YAYIN="$YAYIN --es apiUrl $(alinti "$SUNUCU")"
+YAYIN="$YAYIN --es ssid $(alinti "$SSID")"
+YAYIN="$YAYIN --es psk $(alinti "$PSK")"
+SONUC=$(adb shell "$YAYIN" 2>&1 | tr -d '\r')
 echo "    $SONUC"
 echo "$SONUC" | grep -q 'TAMAM' || hata "provizyon reddedildi (sir yanlis veya cihaz zaten provizyonlu)"
 echo "$SONUC" | grep -q 'sahip=evet' || echo "    UYARI: cihaz sahibi degil - sessiz guncelleme ve WiFi calismayacak"

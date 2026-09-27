@@ -237,6 +237,17 @@ class SyncService : Service() {
         // 6) Oynaticiyi tekrar uyar (yeni hazir olanlar devreye girsin)
         publish(cekilen)
 
+        /*
+         * INDIRME HATASI HEARTBEAT'TEN ONCE YAZILMALI.
+         *
+         * Onceden `downloader.sonHata` telemetriden SONRA lastError'a yaziliyordu ve
+         * bir sonraki pencerenin basindaki temizlik onu siliyordu: yani disk dolu,
+         * bozuk manifest veya "sunucu Range desteklemiyor" gibi tam da gormek
+         * istedigimiz hatalar panele HIC ULASMIYORDU. Gorunur kilmak icin eklenen
+         * alan, kendi siralamasi yuzunden islevsizdi.
+         */
+        downloader.sonHata?.let { config.lastError = it }
+
         // 7) Telemetri: loglar + heartbeat. Pencerenin SONUNDA, indirmeyi calmasin.
         val telemetry = Telemetry(this, config, store, db, clock)
         telemetry.uploadLogs(client)
@@ -263,9 +274,6 @@ class SyncService : Service() {
         }
 
         config.lastSyncAt = clock.now()
-        // Indirme sirasinda anlasilir bir sorun olduysa (disk dolu, bozuk manifest)
-        // onu KORU; yoksa temizle. Aksi halde tespit edilebilir tek ipucu kayboluyordu.
-        downloader.sonHata?.let { config.lastError = it }
         Log.i(TAG, "senkron tamam, oturumda inen: ${downloader.sessionBytes / 1024} KB")
 
         /*
@@ -462,12 +470,20 @@ class SyncService : Service() {
                 id = item.id,
                 evergreen = item.evergreen,
                 validFrom = item.validFrom,
+                validUntil = item.validUntil,
                 remainingBytes = if (parcaSayisi > 0) remaining else item.size
             )
             byId[item.id] = item
         }
 
-        for (id in SyncPlan.order(needs, appUpdate = update != null, appCritical = update?.critical == true)) {
+        // Saat supheliyse 0 geciyoruz: o durumda "suresi bitmis" karari guvenilir degil
+        // ve dosyayi hic indirmemek, saat duzelince oynatacak sey birakmamak olurdu.
+        val saat = clock.snapshot()
+        val simdi = if (saat.trusted) saat.nowMs else 0L
+
+        for (id in SyncPlan.order(
+            needs, appUpdate = update != null, appCritical = update?.critical == true, nowMs = simdi
+        )) {
             if (!stillRunning()) return hazirGuncelleme
             try {
                 if (id == SyncPlan.APP_UPDATE) {

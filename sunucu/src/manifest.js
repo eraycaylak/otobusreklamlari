@@ -10,10 +10,39 @@ export function buildManifest (device) {
   const s = db()
   const group = device.group || 'default'
 
+  const simdi = Date.now()
   const items = []
   for (const c of Object.values(s.campaigns)) {
     if (!c.enabled) continue
-    if (!c.evergreen && Array.isArray(c.groups) && c.groups.length && !c.groups.includes(group)) continue
+
+    /*
+     * SURESI GECMIS KAMPANYA MANIFESTE GIRMEZ.
+     *
+     * Cihaz zaten oynatmiyor (Eligibility reddediyor), ama manifeste koymak iki somut
+     * zarar veriyordu:
+     *  1. Cihaz o dosyayi INDIRIYOR - ve indirme siralamasinda `validFrom` cok geride
+     *     oldugu icin EN BASA geciyordu: 3 dakikalik pencere, asla oynatilamayacak bir
+     *     dosyaya harcaniyordu. Her ziyarette yeniden, cunku dosya hazir olmuyor.
+     *  2. Disk ve temizlik turu bosa calisiyordu.
+     * Cihaz tarafinda da bir suzgec var (SyncPlan P4) - iki taraf birbirine guvenmesin.
+     *
+     * "Acik ama suresi gecmis" kampanyalar /api/admin/state uyarilarinda bildiriliyor,
+     * yani sessizce kaybolmuyorlar.
+     */
+    if (!c.evergreen && c.validUntil && Date.parse(c.validUntil) < simdi) continue
+    /*
+     * GRUP SUZGECI EVERGREEN ICIN DE GECERLI.
+     *
+     * Onceden evergreen kampanyalar suzgeci ATLIYORDU: panelde "yalnizca hat-14"
+     * secilse bile o icerik TUM filoya gidiyordu. Operatorun acik bir secimini
+     * sessizce yok saymak, en azindan sasirtici; hat bazli farkli kurum tanitimi
+     * yapmak isteyen biri icin ise dogrudan yanlis yayin.
+     *
+     * Bunun bir riski var: bir grubun HIC evergreen'i kalmamasi (ekran bos kalma
+     * ihtimali). Bu yuzden gizlice telafi etmiyoruz - /api/admin/state, evergreen'i
+     * olmayan gruplari acikca uyari olarak bildiriyor ve panelde gorunuyor.
+     */
+    if (Array.isArray(c.groups) && c.groups.length && !c.groups.includes(group)) continue
     const item = s.items[c.itemSha]
     if (!item) continue
     items.push({
@@ -70,10 +99,18 @@ export function buildManifest (device) {
       staggerMaxMs: 15000,          // 20 cihaz ayni anda AP'yi bogmasin
       parallelChunks: 2,            // paylasimli AP'de 2 baglanti en verimlisi
       connectTimeoutMs: 8000,
-      readTimeoutMs: 15000,
-      heartbeatEveryMs: 3600000,
-      maxStalenessHours: 72,        // bu sureden uzun senkronsuz kalirsa panelde alarm
-      cellularAllowed: false        // 4G yok; ileride acilabilir diye parametre
+      readTimeoutMs: 15000
+      /*
+       * heartbeatEveryMs / maxStalenessHours / cellularAllowed KALDIRILDI.
+       *
+       * Ucu de gonderiliyor ama cihazda HICBIR YERDE kullanilmiyordu. Kullanilmayan
+       * bir ayar, olmayan bir ayardan kotudur: operator degeri degistirir, hicbir sey
+       * olmaz ve sebebi aranirken zaman kaybedilir.
+       *  - heartbeat PENCERE BASINA bir kez gidiyor (zamanlayiciyla degil) - dogru
+       *    tasarim: cihaz yalnizca noktada agdayken konusabiliyor
+       *  - "bayat" karari SUNUCUDA veriliyor; artik gercek bir ayar: STALE_HOURS
+       *  - hucresel baglanti yok
+       */
     },
     rolloutGroups: config.rolloutGroups,
 

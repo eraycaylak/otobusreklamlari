@@ -39,11 +39,25 @@ data class Policy(
     val staggerMaxMs: Long = 15_000,
     val parallelChunks: Int = 2,
     val connectTimeoutMs: Long = 8_000,
-    val readTimeoutMs: Long = 15_000,
-    val heartbeatEveryMs: Long = 3_600_000,
-    val maxStalenessHours: Int = 72,
-    val cellularAllowed: Boolean = false
+    val readTimeoutMs: Long = 15_000
 )
+/*
+ * KALDIRILAN UC ALAN: heartbeatEveryMs, maxStalenessHours, cellularAllowed.
+ *
+ * Ucu de sunucuda uretilip cihazda ayristiriliyor ama HICBIR YERDE kullanilmiyordu.
+ * Kullanilmayan bir ayar, olmayan bir ayardan KOTUDUR: ayar varmis gibi gorunur,
+ * operator degeri degistirir, hicbir sey olmaz ve sebebi aranirken zaman kaybedilir.
+ *
+ *   heartbeatEveryMs   -> heartbeat PENCERE BASINA bir kez gidiyor, zamanlayiciyla
+ *                         degil. Dogru tasarim bu: cihaz zaten yalnizca noktada
+ *                         agdayken konusabiliyor, arada bir "her saat" gondermenin
+ *                         anlami yok.
+ *   maxStalenessHours  -> "bayat" karari SUNUCUDA veriliyor (panel). Cihazin bu
+ *                         degeri bilmesine gerek yok; sunucu tarafinda gercek bir
+ *                         ayara donusturuldu (STALE_HOURS).
+ *   cellularAllowed    -> hucresel baglanti yok. Gerekirse eklenir; simdi yer
+ *                         tutuyor ve yanlis bir esneklik izlenimi veriyordu.
+ */
 
 data class PlayManifest(
     val schema: Int,
@@ -151,10 +165,7 @@ object ManifestParser {
             staggerMaxMs = o.optLong("staggerMaxMs", d.staggerMaxMs).coerceIn(0, 60_000),
             parallelChunks = o.optInt("parallelChunks", d.parallelChunks).coerceIn(1, 4),
             connectTimeoutMs = o.optLong("connectTimeoutMs", d.connectTimeoutMs).coerceIn(1_000, 60_000),
-            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs).coerceIn(1_000, 120_000),
-            heartbeatEveryMs = o.optLong("heartbeatEveryMs", d.heartbeatEveryMs).coerceAtLeast(60_000),
-            maxStalenessHours = o.optInt("maxStalenessHours", d.maxStalenessHours).coerceIn(1, 24 * 30),
-            cellularAllowed = o.optBoolean("cellularAllowed", d.cellularAllowed)
+            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs).coerceIn(1_000, 120_000)
         )
     }
 

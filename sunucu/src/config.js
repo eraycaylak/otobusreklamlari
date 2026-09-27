@@ -71,7 +71,16 @@ export const config = {
    * karistiran bir ara sunucunun TUM filonun indirmesini durdurmasina karsi. /app
    * (APK) icin boyle bir kacis YOK: o dosya PROVISION_SECRET tasiyor.
    */
-  contentAuth: (process.env.CONTENT_AUTH || '1') !== '0'
+  contentAuth: (process.env.CONTENT_AUTH || '1') !== '0',
+
+  /*
+   * Bir cihaz kac saat senkron olmazsa panelde "bayat" sayilir.
+   *
+   * Bu deger onceden manifestte cihaza GONDERILIYOR ama cihazda hic kullanilmiyordu;
+   * panel ise ayri bir yerde 72'yi SABIT tutuyordu. Yani "ayar" gorunen sey hicbir
+   * seyi degistirmiyordu. Karar sunucuda verildigi icin ayar da burada.
+   */
+  staleHours: Number(process.env.STALE_HOURS || 72)
 }
 
 export const paths = {
