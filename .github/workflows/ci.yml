@@ -81,25 +81,6 @@ jobs:
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret
 
-      # Lint hatasi verdiginde Gradle'in konsol ciktisi ic ice giriyor ve hatalarin
-      # bir kismi kayboluyor. Tam metin raporu her zaman diskte: basarisizlikta
-      # oldugu gibi basiyoruz, yoksa "2 hata var" deyip hangileri oldugunu
-      # gostermeyen bir log ile kaliyoruz.
-      - name: Lint raporunu yazdir
-        if: failure()
-        working-directory: android
-        run: |
-          R=app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
-          if [ ! -f "$R" ]; then echo "lint metin raporu bulunamadi: $R"; exit 0; fi
-          cat "$R"
-          # HATALAR EN SONA: log ciktisi kuyruktan okundugu icin (57 uyari raporun
-          # buyuk kismini kapliyor) hatalar aksi halde gorunmez kalabiliyor. Bloklayici
-          # bir lint, hatasi okunamiyorsa teshis edilemeyen bir kapiya donusur.
-          echo ""
-          echo "================ LINT HATALARI (ozet) ================"
-          grep -E "^.*: Error:" "$R" || echo "(metin raporunda Error satiri yok)"
-          echo "======================================================"
-
       - name: APK derle (debug)
         working-directory: android
         run: >
@@ -175,6 +156,25 @@ jobs:
           name: app-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # ------------------------------------------------------------------
+      # LINT RAPORU EN SONDA - ve bu konum bilincli.
+      #
+      # Rapor daha once lint adiminin hemen ardindaydi; ardindan gelen yapi-cikti
+      # yukleme adimlarinin ayrintili loglari onu KUYRUKTAN ITIYORDU ve hatalar
+      # pratikte okunamiyordu. Bloklayici bir lint, hatasi okunamiyorsa teshis
+      # edilemeyen bir kapiya donusur. En son adim olarak kalmasi gerekiyor.
+      # ------------------------------------------------------------------
+      - name: Lint raporu (hatalar en sonda)
+        if: failure()
+        working-directory: android
+        run: |
+          R=app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if [ ! -f "$R" ]; then echo "lint metin raporu bulunamadi: $R"; exit 0; fi
+          echo "=============== LINT HATALARI ==============="
+          grep -E ": Error:" "$R" -A 3 || echo "(Error satiri yok)"
+          echo "============================================="
+          echo "Uyari sayisi: $(grep -c ': Warning:' "$R" || true)"
 
   betikler:
     name: Kabuk betikleri

@@ -138,12 +138,25 @@ class DeviceAdmin(private val context: Context) {
             return false
         }
 
-        return runCatching {
+        /*
+         * ACIK try/catch - runCatching DEGIL.
+         *
+         * Iki sebep:
+         *  1. lint'in MissingPermission denetimi, SecurityException'in ACIKCA
+         *     yakalandigini gormek istiyor. runCatching bir inline fonksiyon ve
+         *     icindeki catch(Throwable) lint tarafindan bu koruma olarak taninmiyor -
+         *     yani hata gercekten ele alinmis olsa bile uyari devam ediyordu.
+         *  2. Iki basarisizlik farkli seyler anlatiyor ve sahada farkli mudahale
+         *     gerektiriyor: IZIN reddedildi (cihaz sahibi degiliz / yetki kaldirilmis)
+         *     ile ROM/surucu hatasi. Tek bir "yazilamadi" satiri ikisini ayirmiyordu.
+         */
+        return try {
             if (!wm.isWifiEnabled) wm.setWifiEnabled(true)
 
             val quoted = "\"$ssid\""
-            wm.configuredNetworks?.firstOrNull { it.SSID == quoted }?.let {
-                wm.enableNetwork(it.networkId, false)
+            val mevcut = wm.configuredNetworks?.firstOrNull { it.SSID == quoted }
+            if (mevcut != null) {
+                wm.enableNetwork(mevcut.networkId, false)
                 return true
             }
 
@@ -161,20 +174,17 @@ class DeviceAdmin(private val context: Context) {
             }
             val id = wm.addNetwork(conf)
             if (id == -1) {
-                Log.e(TAG, "WiFi profili EKLENEMEDI - cihaz sahibi degil misiniz?")
+                Log.e(TAG, "WiFi profili EKLENEMEDI - cihaz sahibi degil misiniz? (isDeviceOwner=$isDeviceOwner)")
                 return false
             }
             wm.enableNetwork(id, false)
-            runCatching { wm.saveConfiguration() }
+            runCatching { wm.saveConfiguration() }   // API 26+ no-op olabilir, onemli degil
             true
-        }.getOrElse {
-            // SecurityException ayri raporlanir: "izin yok" ile "ROM reddetti" farkli
-            // sorunlar ve sahada farkli mudahale gerektiriyor.
-            if (it is SecurityException) {
-                Log.e(TAG, "WiFi profili yazilamadi: IZIN REDDEDILDI (SecurityException)", it)
-            } else {
-                Log.e(TAG, "WiFi profili yazilamadi", it)
-            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "WiFi profili yazilamadi: IZIN REDDEDILDI (cihaz sahibi mi? isDeviceOwner=$isDeviceOwner)", e)
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "WiFi profili yazilamadi (ROM/surucu hatasi?)", e)
             false
         }
     }
