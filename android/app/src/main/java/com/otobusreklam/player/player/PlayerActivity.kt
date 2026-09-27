@@ -85,14 +85,31 @@ class PlayerActivity : AppCompatActivity() {
         // surume donulur. (Surec hic baslamadan cokerse bu kod calismaz -
         // asil koruma kademeli yayimdir.)
         config.startupFailures = config.startupFailures + 1
-        handler.postDelayed({ config.startupFailures = 0 }, HEALTHY_AFTER_MS)
+        handler.postDelayed({
+            config.startupFailures = 0
+            if (config.safeMode) {
+                // 2 dakika sorunsuz calistik: guvenli moddan cikilabilir.
+                Log.i(TAG, "guvenli mod kapatiliyor, surum saglikli calisiyor")
+                config.safeMode = false
+            }
+        }, HEALTHY_AFTER_MS)
 
-        if (config.startupFailures >= 3) {
-            Updater(this, config, store).checkStartupHealth()
-        }
+        val guvenliMod = Updater(this, config, store).startupHealthCheck()
+        config.safeMode = guvenliMod
+        if (guvenliMod) Log.w(TAG, "GUVENLI MOD: sadece oynatma ve senkron calisiyor")
 
-        admin.applyPolicies()
-        admin.enterKiosk(this)
+        /*
+         * Zorunlu olmayan her is AYRI AYRI korunuyor.
+         *
+         * Bu bir kiosk: ekranin kararmasi isin kendisinin durmasi demek. Cihaz
+         * sahibi politikalarinda veya kiosk kilidinde beklenmedik bir istisna
+         * (ROM farki, kaldirilmis yetki) tum aktiviteyi dusurup ekrani karartirdi.
+         * Reklam oynatmak, kiosk kilidinden daha onceliklidir.
+         */
+        runCatching { admin.applyPolicies() }
+            .onFailure { Log.e(TAG, "cihaz politikalari uygulanamadi, devam ediliyor", it) }
+        runCatching { admin.enterKiosk(this) }
+            .onFailure { Log.e(TAG, "kiosk moduna girilemedi, devam ediliyor", it) }
 
         initPlayer()
         observePlaylist()

@@ -84,6 +84,25 @@ class Telemetry(
                     }
                     val ack = JSONObject(response.body?.string().orEmpty()).optLong("ackSeq", -1)
                     if (ack < 0) return
+
+                    /*
+                     * ILERLEME KONTROLU.
+                     *
+                     * markUploaded(ack) yalnizca seq <= ack satirlari isaretler. Sunucu
+                     * bir hata sonucu bu partinin EN KUCUK seq'inden dusuk bir ack
+                     * donerse hicbir satir isaretlenmez; bir sonraki tur ayni satirlari
+                     * ceker ve dongu 3 dakikalik pencereyi tamamen yakar - ustelik
+                     * sessizce, cunku HTTP 200 doner.
+                     *
+                     * Ilerleme yoksa duruyoruz: loglar cihazda kaliyor (kaybolmuyor) ve
+                     * durum lastError uzerinden panele dusuyor.
+                     */
+                    if (ack < rows.first().seq) {
+                        Log.e(TAG, "sunucu ilerlemeyen ack dondu (ack=$ack < ilk=${rows.first().seq}), log yukleme durduruldu")
+                        config.lastError = "log yukleme ilerlemiyor (ack=$ack)"
+                        return
+                    }
+
                     db.playLog().markUploaded(ack)
                     Log.i(TAG, "${rows.size} log satiri yuklendi (ack=$ack)")
                 }
@@ -171,11 +190,18 @@ class Telemetry(
         return try {
             retriever.setDataSource(path)
             val frame: Bitmap = retriever.getFrameAtTime(1_000_000L) ?: return null
+            // Bozuk/sifir boyutlu kare: olcekleme sifira bolme hatasi verirdi
+            if (frame.width <= 0 || frame.height <= 0) {
+                frame.recycle()
+                return null
+            }
 
             // Kucult: 640 piksel genislik kanit icin fazlasiyla yeterli, bant genisligini yemesin
             val scaled = Bitmap.createScaledBitmap(
                 frame, PROOF_WIDTH, (frame.height * PROOF_WIDTH / frame.width).coerceAtLeast(1), true
             )
+            // Kaynak kareyi hemen birak: 1080p bir kare ~8 MB ve bu cihazlarda bellek dar
+            if (scaled !== frame) frame.recycle()
             val canvas = Canvas(scaled)
             val text = "${config.deviceId} | $itemId | " +
                 Instant.ofEpochMilli(now).toString() +
@@ -192,7 +218,7 @@ class Telemetry(
 
             java.io.ByteArrayOutputStream().also {
                 scaled.compress(Bitmap.CompressFormat.JPEG, 60, it)
-            }.toByteArray()
+            }.toByteArray().also { scaled.recycle() }
         } catch (e: Exception) {
             Log.i(TAG, "kare cikarilamadi: ${e.message}")
             null

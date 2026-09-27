@@ -85,6 +85,15 @@ class Config(context: Context) {
      * surer ve oynatici hala 03:25-03:35 penceresindeyken tekrar yeniden baslatirdi.
      * Sonuc: pencere kapanana kadar suren bir yeniden baslatma dongusu.
      */
+    /**
+     * Guvenli mod: art arda basarisiz acilislardan sonra aciliyor.
+     * Yalnizca OYNATMA ve SENKRON calisir; zorunlu olmayan isler atlanir.
+     * Duzeltilmis surum indiginde kendiliginden kapanir.
+     */
+    var safeMode: Boolean
+        get() = prefs.getBoolean(K_SAFE_MODE, false)
+        set(v) = prefs.edit().putBoolean(K_SAFE_MODE, v).apply()
+
     var lastRebootDay: String
         get() = prefs.getString(K_LAST_REBOOT_DAY, "") ?: ""
         set(v) {
@@ -142,6 +151,7 @@ class Config(context: Context) {
         const val K_LAST_PROOF = "lastProofAt"
         const val K_LOG_EPOCH = "logEpoch"
         const val K_LAST_REBOOT_DAY = "lastRebootDay"
+        const val K_SAFE_MODE = "safeMode"
         const val K_STARTUP_FAILURES = "startupFailures"
         const val K_GOOD_APK = "knownGoodApk"
     }

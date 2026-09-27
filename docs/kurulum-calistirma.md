@@ -152,17 +152,32 @@ PROVISION_SECRET=uzun-rastgele-bir-dize
 > Bu kasıtlı bir davranış: önbellek kutusu ele geçse bile cihaza sahte reklam
 > yüklenemez.
 
-### 4.2 İmza anahtarı (release)
+### 4.2 İmza anahtarı (release) — **zorunlu**
 
-**Tüm sürümler aynı anahtarla imzalanmalı**, yoksa sessiz güncelleme reddedilir.
-Anahtarı bir kez üretip güvenli yerde saklayın:
+İmzasız APK cihaza kurulamaz. Anahtar tanımlı değilken `./gradlew assembleRelease`
+artık anlaşılır bir mesajla **durur** (eskiden sessizce `-unsigned.apk` üretiyordu ve
+hata ancak sahada, provizyon sırasında ortaya çıkıyordu).
 
 ```bash
 keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
         -validity 10000 -alias reklam
 ```
 
-`android/app/build.gradle.kts` içindeki `release` bloğuna `signingConfig` ekleyin.
+Sonra `android/gradle.properties` içine (dosyada yorumlu örneği hazır):
+
+```properties
+RELEASE_KEYSTORE=/guvenli/yol/reklam.jks
+RELEASE_KEYSTORE_PASSWORD=...
+RELEASE_KEY_ALIAS=reklam
+RELEASE_KEY_PASSWORD=...
+```
+
+> **Tüm sürümler aynı anahtarla imzalanmalı.** `PackageInstaller` farklı imzalı bir
+> güncellemeyi reddeder — yani sessiz güncelleme çalışmaz ve her otobüse elle gitmek
+> gerekir. Anahtarı kaybederseniz geri dönüşü yok: **yedekleyin.**
+>
+> Anahtar dosyası ve parolalar depoya girmez (`.gitignore` `*.jks` ve `*.keystore`
+> dosyalarını dışlıyor).
 
 ### 4.3 Test edin ve derleyin
 
@@ -241,9 +256,22 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
 Acil bir düzeltmeyse `&critical=1` ekleyin — o zaman güncelleme içerikten **önce**
 indirilir.
 
-> **50 cihaza aynı gün güncelleme göndermeyin.** Uygulamada bir açılış-sağlık
-> sayacı ve geri dönüş mekanizması var, ama uygulama süreç başlamadan çöküyorsa
-> o kod hiç çalışmaz. Gerçek koruma kademeli yayımdır.
+> **50 cihaza aynı gün güncelleme göndermeyin.**
+>
+> **Otomatik geri dönüş diye bir şey yok** — ve olamaz: `PackageInstaller` sürüm
+> düşürmeyi reddeder (`INSTALL_FAILED_VERSION_DOWNGRADE`), bunu aşan
+> `setRequestDowngrade` ise uygulamalara kapalı bir sistem API'sidir. Onun yerine
+> uygulama art arda başarısız açılışta **güvenli moda** geçer: sadece oynatma ve
+> senkron çalışır, zorunlu olmayan işler atlanır. Böylece ekran kararmaz ve
+> düzeltilmiş sürüm ulaşabilir.
+>
+> Bozuk bir sürüm yayınlarsanız yapılacak şey **ileriye doğru düzeltmektir**:
+> daha yüksek bir `versionCode` ile düzeltilmiş APK'yı `&critical=1` ile yayınlayın.
+> Panelde o cihazın son hatası `GUVENLI MOD: ...` olarak görünür.
+>
+> Cihaz hiç açılamıyorsa teknisyen saklanan sürüme elle dönebilir:
+> `adb install -r -d /data/data/com.otobusreklam.player/files/app/known-good.apk`
+> (`-d` = sürüm düşürmeye izin ver).
 
 ---
 
@@ -316,6 +344,8 @@ onlar faturanın dayanağı.
 | Süresi geçmiş reklam oynuyor | Teşhis ekranında "saat: ŞÜPHELİ" mi yazıyor? |
 | Kare atlıyor | Dosya transcode standardından mı geçti? HEVC olmamalı |
 | Güncelleme gitmiyor | APK'lar **aynı anahtarla** mı imzalı? `rolloutGroup` cihazın grubunu kapsıyor mu? |
+| Panelde "GUVENLI MOD" yazıyor | Sürüm açılışta çöküyor. Düzeltilmiş APK'yı `&critical=1` ile yayınlayın |
+| `assembleRelease` hata veriyor | `gradle.properties` içinde `RELEASE_KEYSTORE` tanımlı mı? (§4.2) |
 
 Cihaz logları:
 

@@ -171,7 +171,11 @@ class SyncService : Service() {
         val telemetry = Telemetry(this, config, store, db, clock)
         telemetry.uploadLogs(client)
         telemetry.sendHeartbeat(client, manifest, downloader.sessionBytes)
-        telemetry.sendProofFrame(client)   // gunde en fazla bir kez, en sona birakilir
+        // Kanit karesi zorunlu degil ve en agir islem (video cozme + bitmap).
+        // Guvenli modda atlaniyor: oncelik duzeltilmis surumu indirebilmek.
+        if (!config.safeMode) {
+            telemetry.sendProofFrame(client)   // gunde en fazla bir kez, en sona birakilir
+        }
 
         // 7) Temizlik
         val keep = manifest.items.map { it.sha256 }.toMutableSet()

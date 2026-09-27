@@ -238,11 +238,33 @@ gitmek gerekir — projenin çözmeye çalıştığı problem tam olarak buydu.
 
 - Kademeli yayım: `rolloutGroup` (cihaz grubu ≤ eşik ise günceller)
 - Kurulumdan önce çalışan APK `app/known-good.apk` olarak saklanır
-- Açılış sağlık sayacı: açılışta artar, 2 dk sağlıklı çalışınca sıfırlanır;
-  3 başarısız açılışta saklanan sürüme dönülür
+- Açılış sağlık sayacı: açılışta artar, 2 dk sağlıklı çalışınca sıfırlanır
 
-**Dürüst sınır:** uygulama süreç başlamadan çöküyorsa bu kod hiç çalışmaz.
-Gerçek koruma **kademeli yayımdır**.
+### Otomatik geri dönüş neden yok
+
+`PackageInstaller` sürüm düşürmeyi reddeder (`INSTALL_FAILED_VERSION_DOWNGRADE`);
+bunu aşan `setRequestDowngrade` bir `@SystemApi`'dir ve uygulamalara açık değildir.
+Yani "bozuk sürümü kendi kendine geri al" mekanizması stok Android'de **kurulamaz**.
+Önceki kod bunu deniyordu ve sessizce başarısız oluyordu — çalışmayan bir emniyet
+kemeri, hiç olmamasından daha tehlikelidir.
+
+Yerine üç şey yapılıyor:
+
+1. **Merkeze haber** — `lastError` panele `GUVENLI MOD: N başarısız açılış` olarak düşer
+2. **Ekran ayakta** — güvenli modda yalnızca oynatma ve senkron çalışır; zorunlu olmayan
+   işler (kanıt karesi) atlanır, kiosk/politika çağrıları tek tek korunur. Çoğu çökme
+   oynatmada değil çevre işlerinde olur; reklam dönmeye devam eder.
+3. **Senkron açık** — düzeltilmiş sürüm ancak böyle ulaşabilir
+
+2 dakika sağlıklı çalışınca güvenli mod kendiliğinden kapanır.
+
+**Kurtarma:** ileriye doğru düzeltme (daha yüksek `versionCode` + `critical=1`).
+Cihaz hiç açılmıyorsa teknisyen `adb install -r -d .../files/app/known-good.apk`
+ile elle döner — saklanan APK'nın amacı budur.
+
+**Güç titremesi uyarısı:** açılış sayacı yalnızca gerçek çökme döngüsünü ölçer.
+Otobüsün kontağı kesilip açılırsa `BootReceiver` sayacı sıfırlar — aksi halde
+manevra sırasındaki birkaç kontak kesintisi yanlışlıkla "sürüm bozuk" sayılırdı.
 
 **Tüm sürümler aynı anahtarla imzalanmalı**, yoksa `PackageInstaller` reddeder.
 
