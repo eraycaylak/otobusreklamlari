@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (24 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
+Testleri çalıştırın (38 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
 
 ```bash
 npm test
@@ -154,9 +154,18 @@ PROVISION_SECRET=uzun-rastgele-bir-dize
 
 ### 4.2 İmza anahtarı (release) — **zorunlu**
 
-İmzasız APK cihaza kurulamaz. Anahtar tanımlı değilken `./gradlew assembleRelease`
-artık anlaşılır bir mesajla **durur** (eskiden sessizce `-unsigned.apk` üretiyordu ve
-hata ancak sahada, provizyon sırasında ortaya çıkıyordu).
+İmzasız APK cihaza kurulamaz. Anahtar tanımlı değilken release derlemesi artık
+anlaşılır bir mesajla **durur** (eskiden sessizce `-unsigned.apk` üretiyordu ve hata
+ancak sahada, provizyon sırasında ortaya çıkıyordu).
+
+Kapı `assembleRelease` ile sınırlı değil: `bundleRelease`, `packageRelease` ve
+`installRelease` da aynı kontrolden geçer — bunlar da imzalı APK paketler ve
+önceden kapıdan sessizce geçiyorlardı.
+
+Aynı kapı `MANIFEST_PUBLIC_KEY` ve `PROVISION_SECRET` değerlerini de doğrular:
+boş veya yer tutucu bir değer APK'ya gömülürse cihaz **hiçbir** manifesti
+doğrulayamaz (tüm filo sessizce durur) ya da provizyon boş bir sırla kabul edilir.
+İkisi de yalnızca sahada anlaşılan hatalardır.
 
 ```bash
 keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
@@ -184,13 +193,19 @@ RELEASE_KEY_PASSWORD=...
 ```bash
 cd android
 
-# 36 birim testi: saat aralıkları, ağırlıklı sıralama, saat mantığı,
+# 65 birim testi: saat aralıkları, uygunluk kuralı (validUntil/daypart/evergreen),
+# ağırlıklı sıralama, saat mantığı (yeniden başlatma tespiti, imza kademesi, çapa yaşı),
 # indirme önceliği ve sunucuyla kademeli yayım hash uyumu
 ./gradlew testDebugUnitTest
 
 ./gradlew assembleRelease
 # -> app/build/outputs/apk/release/app-release.apk
 ```
+
+> **`mapping.txt` dosyasını saklayın.** Release derlemesi R8 ile küçültülüyor;
+> `app/build/outputs/mapping/release/mapping.txt` olmadan sahadan gelen yığın izleri
+> çözülemez. Yayınladığınız **her sürüm için** arşivleyin — CI bunu yapı çıktısı
+> olarak da yüklüyor (`r8-mapping`).
 
 > İlk çalıştırmada Gradle kendini indirir (`gradle/wrapper/gradle-wrapper.properties`).
 > Ayrı bir Gradle kurulumuna gerek yok.
@@ -269,9 +284,17 @@ indirilir.
 > daha yüksek bir `versionCode` ile düzeltilmiş APK'yı `&critical=1` ile yayınlayın.
 > Panelde o cihazın son hatası `GUVENLI MOD: ...` olarak görünür.
 >
-> Cihaz hiç açılamıyorsa teknisyen saklanan sürüme elle dönebilir:
-> `adb install -r -d /data/data/com.otobusreklam.player/files/app/known-good.apk`
-> (`-d` = sürüm düşürmeye izin ver).
+> **Saklanan APK ile elle dönüş — dürüst sınır.** `known-good.apk` cihazda
+> `/data/data/com.otobusreklam.player/files/app/` altında duruyor ve bu dizini
+> **`adb shell` kullanıcısı okuyamaz**: dosya uygulamanın kendi kullanıcısına ait ve
+> `run-as` yalnızca `debuggable` derlemelerde çalışır — release APK'da çalışmaz.
+> Yani "teknisyen adb ile geri kurar" **gerçekçi bir kurtarma yolu değildir**
+> (yalnızca root/kurtarma erişimi olan cihazlarda işe yarar).
+>
+> Gerçek kurtarma yolu **ileriye doğru düzeltmedir** (yukarıdaki madde). Cihaz hiç
+> açılmıyor ve senkron da olamıyorsa kalan tek yol fabrika ayarlarına döndürüp
+> yeniden provizyonlamaktır (§5). Kopya yine de tutuluyor: maliyeti bir dosya kadar
+> ve root erişimi olan bir vakada işe yarar.
 
 ---
 

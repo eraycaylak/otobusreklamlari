@@ -2,39 +2,78 @@
  * Kimlik dogrulama korumalari ve girdi temizligi.
  */
 
-const attempts = new Map()   // ip -> { count, until }
+import crypto from 'node:crypto'
+
+const attempts = new Map()   // "kapsam|anahtar" -> { count, until }
 
 const WINDOW_MS = 15 * 60 * 1000
-const MAX_FAILURES = 10
 const LOCK_MS = 15 * 60 * 1000
 
 /**
- * Basarisiz kimlik denemelerini sinirlar.
+ * DENEME SINIRLARI KAPSAMA GORE AYRI.
  *
- * Admin tokeni tek bir dizedir; sinirsiz deneme hakki verilirse zamanla
- * denenebilir. 15 dakikada 10 basarisiz denemeden sonra o IP 15 dakika kilitlenir.
+ * Onceden tek bir IP-bazli sayac vardi ve cihaz ile admin kimlik dogrulamasi onu
+ * PAYLASIYORDU. Bu mimaride TUM otobusler noktadaki tek PtMP linkinin arkasinda,
+ * yani sunucuya AYNI IP'den goruluyorlar. Sonuc: tokeni iptal edilmis ya da yanlis
+ * provizyonlanmis TEK BIR otobus, 15 dakikada 10 deneme yapip o noktadaki BUTUN
+ * otobusleri 15 dakika kilitliyordu. Her otobus gunde birkac dakikalik pencereye
+ * sahip oldugu icin bu, tek bozuk cihazin tum hattin yayinini durdurmasi demekti.
+ * Ustelik sebep sunucu loglarinda "429" olarak gorunur ve asil cihaz belli olmaz.
+ *
+ * Yeni tasarim iki katmanli:
+ *   device : SUNULAN TOKENIN parmak izine gore - bozuk cihaz yalnizca kendini kilitler
+ *   ip     : paylasilan cikis IP'sine gore, COK YUKSEK esikle - kaba kuvvet yine
+ *            sinirli (cihaz tokenlari uzun ve rastgele) ama komsu otobusler etkilenmez
+ *   admin  : IP'ye gore, DAR esikle - admin tokeni tek bir dizedir ve panel tek yerden
+ *            kullanilir; burada siki olmanin bir maliyeti yok
  */
-export function tooManyFailures (ip) {
-  const rec = attempts.get(ip)
-  if (!rec) return false
-  if (Date.now() > rec.until) { attempts.delete(ip); return false }
-  return rec.count >= MAX_FAILURES
+const LIMITS = {
+  admin: 10,
+  device: 20,
+  ip: 200
 }
 
-export function noteFailure (ip) {
+function anahtar (scope, key) {
+  return `${scope}|${key}`
+}
+
+function limit (scope) {
+  return LIMITS[scope] ?? 10
+}
+
+/** Token'i LOGA VE BELLEGE yazmadan kimliklendir. */
+export function tokenFingerprint (token) {
+  if (!token) return 'yok'
+  return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 16)
+}
+
+export function tooManyFailures (scope, key) {
+  const rec = attempts.get(anahtar(scope, key))
+  if (!rec) return false
+  if (Date.now() > rec.until) { attempts.delete(anahtar(scope, key)); return false }
+  return rec.count >= limit(scope)
+}
+
+export function noteFailure (scope, key) {
   const now = Date.now()
   if (attempts.size > 5000) budaEskileri()
-  const rec = attempts.get(ip)
+  const k = anahtar(scope, key)
+  const rec = attempts.get(k)
   if (!rec || now > rec.until) {
-    attempts.set(ip, { count: 1, until: now + WINDOW_MS })
+    attempts.set(k, { count: 1, until: now + WINDOW_MS })
     return
   }
   rec.count += 1
-  if (rec.count >= MAX_FAILURES) rec.until = now + LOCK_MS
+  if (rec.count >= limit(scope)) rec.until = now + LOCK_MS
 }
 
-export function noteSuccess (ip) {
-  attempts.delete(ip)
+export function noteSuccess (scope, key) {
+  attempts.delete(anahtar(scope, key))
+}
+
+/** Testler icin: sayaclari sifirla. */
+export function resetFailures () {
+  attempts.clear()
 }
 
 /**
@@ -45,8 +84,8 @@ export function noteSuccess (ip) {
  */
 function budaEskileri () {
   const now = Date.now()
-  for (const [ip, rec] of attempts) {
-    if (now > rec.until) attempts.delete(ip)
+  for (const [k, rec] of attempts) {
+    if (now > rec.until) attempts.delete(k)
   }
 }
 

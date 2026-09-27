@@ -160,6 +160,34 @@ class Config(context: Context) {
         get() = prefs.getInt(K_STARTUP_FAILURES, 0)
         set(v) = prefs.edit().putInt(K_STARTUP_FAILURES, v).apply()
 
+    /**
+     * KURULUM HATASI - lastError'dan AYRI alan.
+     *
+     * Kurulum sonucu ASENKRON gelir (PackageInstaller yayini). lastError'a yazsaydi
+     * bir sonraki senkron penceresinin basindaki temizlik onu siler ve operator
+     * "guncelleme neden gelmedi?" sorusunu cevaplayamazdi - hata hicbir yerde
+     * gorunmezdi. Bu alan yalnizca BASARILI bir kurulumda temizlenir.
+     */
+    var lastInstallError: String
+        get() = prefs.getString(K_INSTALL_ERROR, "") ?: ""
+        set(v) = prefs.edit().putString(K_INSTALL_ERROR, v.take(300)).apply()
+
+    /**
+     * Kurulumu basarisiz olan surum ve kac kez denendigi.
+     *
+     * Onceden basarisiz surum HIC kaydedilmiyordu: ayni APK her pencerede yeniden
+     * yaziliyor ve commit ediliyordu. Her deneme tam bir APK kopyasini /data'ya
+     * yaziyor ve pencereden saniyeler yiyor - hem de hicbir zaman basarili olmayacak
+     * bir is icin (bozuk APK, imza uyusmazligi, yetersiz alan kalicidir).
+     */
+    var failedVersion: Int
+        get() = prefs.getInt(K_FAILED_VERSION, 0)
+        set(v) = prefs.edit().putInt(K_FAILED_VERSION, v).apply()
+
+    var failedVersionTries: Int
+        get() = prefs.getInt(K_FAILED_TRIES, 0)
+        set(v) = prefs.edit().putInt(K_FAILED_TRIES, v).apply()
+
     /** Geri donus icin saklanan, calistigi kanitlanmis APK yolu. */
     var knownGoodApk: String
         get() = prefs.getString(K_GOOD_APK, "") ?: ""
@@ -201,5 +229,8 @@ class Config(context: Context) {
         const val K_STARTUP_FAILURES = "startupFailures"
         const val K_LAST_START_ELAPSED = "lastStartElapsed"
         const val K_GOOD_APK = "knownGoodApk"
+        const val K_INSTALL_ERROR = "lastInstallError"
+        const val K_FAILED_VERSION = "failedVersion"
+        const val K_FAILED_TRIES = "failedVersionTries"
     }
 }

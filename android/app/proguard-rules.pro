@@ -1,3 +1,17 @@
+# ---------------------------------------------------------------------------
+# SAHA YIGIN IZLERI OKUNABILIR OLMAK ZORUNDA.
+#
+# Bu cihazlara uzaktan baglanamiyoruz; elimizdeki tek teshis verisi cihazin
+# gonderdigi hata metni ve logcat'te kalan yigin izi. R8 varsayilan olarak satir
+# numarasi tablosunu ATAR: "bir yerde NullPointerException" gibi hicbir ise
+# yaramayan bir iz kalir ve otobuse gidilmesi gerekir.
+#
+# mapping.txt derleme ciktisinda uretilir (build/outputs/mapping/release/) ve
+# YAYINLANAN HER SURUM ICIN SAKLANMALIDIR - kaybedilirse o surumden gelen
+# izler bir daha cozulemez. CI bunu yapi ciktisi olarak arsivliyor.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SRC
+
 # Ed25519 kutuphanesi yansima kullanir
 -keep class net.i2p.crypto.eddsa.** { *; }
 -dontwarn net.i2p.crypto.eddsa.**

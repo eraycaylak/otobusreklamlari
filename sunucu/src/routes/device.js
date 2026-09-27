@@ -5,31 +5,43 @@ import path from 'node:path'
 import { db, save, appendPlayLogs, writeHeartbeat } from '../store.js'
 import { buildManifest } from '../manifest.js'
 import { safeEqual } from '../crypto.js'
-import { tooManyFailures, noteFailure, noteSuccess } from '../guard.js'
+import { tooManyFailures, noteFailure, noteSuccess, tokenFingerprint } from '../guard.js'
 import { paths } from '../config.js'
 
 export const deviceRouter = express.Router()
 
-/** Bearer token ile cihaz kimligi. Iptal edilen cihaz 403 alir. */
-function auth (req, res, next) {
+/**
+ * Bearer token ile cihaz kimligi. Iptal edilen cihaz 403 alir.
+ *
+ * DENEME SINIRI IKI KATMANLI (bkz. guard.js):
+ * Bu mimaride noktadaki TUM otobusler tek PtMP linkinin arkasinda, yani sunucuya
+ * AYNI IP'den goruluyor. Tek bir IP sayaci, tokeni iptal edilmis bir otobusun o
+ * noktadaki butun otobusleri kilitlemesine yol aciyordu. Artik asil sinir SUNULAN
+ * TOKENIN parmak izine gore isliyor; IP sayaci yalnizca kaba kuvvete karsi, cok
+ * yuksek bir esikle duruyor.
+ */
+export function auth (req, res, next) {
   const ip = req.ip || 'bilinmiyor'
-  if (tooManyFailures(ip)) {
-    return res.status(429).json({ error: 'cok fazla basarisiz deneme' })
-  }
-
   const header = req.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
+  const parmak = tokenFingerprint(token)
+
+  if (tooManyFailures('device', parmak) || tooManyFailures('ip', ip)) {
+    return res.status(429).json({ error: 'cok fazla basarisiz deneme' })
+  }
   if (!token) return res.status(401).json({ error: 'token yok' })
 
   const s = db()
   const device = Object.values(s.devices).find((d) => safeEqual(d.token, token))
   if (!device) {
-    noteFailure(ip)
+    noteFailure('device', parmak)
+    noteFailure('ip', ip)
     return res.status(401).json({ error: 'token gecersiz' })
   }
   if (device.revoked) return res.status(403).json({ error: 'cihaz iptal edilmis' })
 
-  noteSuccess(ip)
+  noteSuccess('device', parmak)
+  noteSuccess('ip', ip)
   req.device = device
   next()
 }
@@ -96,7 +108,30 @@ deviceRouter.post('/logs', auth,
       ? kayit
       : { epoch: '', seq: Number(kayit) || 0 }
 
-    const yeniKurulum = epoch !== onceki.epoch
+    /*
+     * AYRISTIRILABILIR SATIR YOKSA TEKRAR-ELEME DURUMUNA DOKUNMA.
+     *
+     * Onceden bos/bozuk bir parti (kirpilmis gzip, bir ara sunucunun ekledigi boslukla
+     * bozulmus govde, eski surum) su zinciri tetikliyordu: rows bos -> epoch "" ->
+     * kayitli epoch'tan farkli -> "yeni kurulum" -> lastSeq 0 -> ve en onemlisi
+     * seenSeq YENIDEN '' EPOCH'LA YAZILIYORDU. Bir sonraki GERCEK parti geldiginde
+     * epoch yine farkli gorunuyor, sayac yine sifirlaniyor ve o partinin TUM satirlari
+     * IKINCI KEZ faturaya yaziliyordu. Yani gecici bir ag/gzip sorunu reklamverene
+     * cifte faturalama olarak yansiyordu - sessizce.
+     *
+     * Ayristirilabilir satir yoksa yapacak bir sey de yok: kayitli durumu aynen koru
+     * ve cihaza bilinen ackSeq'i dondur.
+     */
+    if (rows.length === 0) {
+      return res.json({ ackSeq: onceki.seq, accepted: 0, newInstall: false })
+    }
+
+    /*
+     * Epoch BOS gelirse de durumu bozmuyoruz: bos epoch "bilinmiyor" demektir
+     * (eski cihaz surumu), "yeni kurulum" demek DEGILDIR. Yeni kurulum ancak
+     * cihaz GERCEK bir epoch bildirdiginde ve o deger degistiginde soylenebilir.
+     */
+    const yeniKurulum = epoch !== '' && epoch !== onceki.epoch
     const lastSeq = yeniKurulum ? 0 : onceki.seq
     if (yeniKurulum) {
       console.log(`${req.device.id}: yeni kurulum tespit edildi (epoch "${onceki.epoch}" -> "${epoch}"), log sayaci sifirlandi`)
@@ -111,7 +146,9 @@ deviceRouter.post('/logs', auth,
     }
 
     if (fresh.length) appendPlayLogs(req.device.id, fresh)
-    s.seenSeq[req.device.id] = { epoch, seq: maxSeq }
+    // Bos epoch kayitli degeri EZMEZ: aksi halde bir sonraki gercek parti "yeni
+    // kurulum" gibi gorunup ikinci kez faturaya girerdi.
+    s.seenSeq[req.device.id] = { epoch: epoch || onceki.epoch, seq: maxSeq }
     save()
 
     res.json({ ackSeq: maxSeq, accepted: fresh.length, newInstall: yeniKurulum })

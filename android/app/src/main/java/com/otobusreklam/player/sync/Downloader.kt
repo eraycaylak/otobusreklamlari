@@ -76,6 +76,7 @@ class Downloader(
         size: Long,
         chunks: List<ChunkSpec>,
         baseUrl: String,
+        token: String,
         client: OkHttpClient,
         parallel: Int,
         stillRunning: () -> Boolean
@@ -205,7 +206,7 @@ class Downloader(
                         gate.withPermit {
                             if (!stillRunning()) return@withPermit
                             try {
-                                if (fetchChunk(url, chunk, chunks.size, raf, client)) {
+                                if (fetchChunk(url, chunk, chunks.size, raf, client, token)) {
                                     db.chunks().markDone(sha, chunk.idx)
                                     indirilen.addAndGet(chunk.len.toLong())
                                 }
@@ -288,9 +289,10 @@ class Downloader(
         chunk: ChunkEntity,
         totalChunks: Int,
         raf: RandomAccessFile,
-        client: OkHttpClient
+        client: OkHttpClient,
+        token: String
     ): Boolean {
-        val call = client.newCall(Http.range(url, chunk.offset, chunk.len))
+        val call = client.newCall(Http.range(url, chunk.offset, chunk.len, token))
 
         /*
          * IPTAL EDILEN PENCERE, ACIK SOKETI DE KAPATMALI.
@@ -308,7 +310,13 @@ class Downloader(
                 val singleChunkWholeFile = totalChunks == 1 && chunk.offset == 0L
                 if (it.code != 206 && !(it.code == 200 && singleChunkWholeFile)) {
                     Log.w(TAG, "beklenmeyen kod ${it.code} (Range destegi yok mu?) $url")
-                    if (it.code == 200) sonHata = "sunucu Range desteklemiyor (200 dondu): $url"
+                    sonHata = when (it.code) {
+                        200 -> "sunucu Range desteklemiyor (200 dondu): $url"
+                        // Onbellek kutusu Authorization basligini yukari gecirmiyor olabilir.
+                        401, 403 -> "icerik indirme yetkisi reddedildi (HTTP ${it.code}) - onbellek kutusu Authorization basligini geciriyor mu?"
+                        404 -> "icerik sunucuda yok (404): $url"
+                        else -> "icerik indirme HTTP ${it.code}: $url"
+                    }
                     return false
                 }
 

@@ -66,6 +66,8 @@ devam eder. Önbellek kutusu ele geçse bile cihaza sahte reklam yüklenemez.
   "deviceId": "OTOBUS-014",
   "deviceGroup": "hat-14",
   "serverTime": "2026-09-26T08:00:00Z",
+  "timezone": "Europe/Istanbul",
+  "deviceRolloutGroup": 1,
   "items": [{
     "id": "kahve-30",
     "file": "content/a1b2c3.mp4",
@@ -210,21 +212,88 @@ süresidir (~100–300 ms siyah), üstelik günde en fazla birkaç kez.
 
 ## 7. Saat
 
-`clock/ClockManager.kt`
+`clock/ClockManager.kt` + `clock/ClockMath.kt` (saf mantık, 15 birim testi)
 
-Ucuz stick'lerde pil destekli RTC genelde **yoktur**; güç kesilince saat sıfırlanır.
+Ucuz stick'lerde pil destekli RTC genelde **yoktur**; güç kesilince saat sıfırlanır
+veya 1970'e düşer. `validUntil` zorlaması saate bağlı olduğu için bu doğrudan ticari
+bir risk: süresi bitmiş bir reklamı oynatmak, sözleşmesi olmayan envanter yayınlamaktır.
 
-- Her senkronda sunucunun **`Date` başlığından** gerçek zaman alınır
-- Araya geçen süre **monotonik** sayaçla (`elapsedRealtime`) hesaplanır
-- Cihaz yeniden başlarsa monotonik çapa sıfırlanır → saat **şüpheli**
-- Şüpheliyken kural: **"süresi geçmiş say, oynatma"** → evergreen'e düşülür
+### Üç kademeli güven
 
-### Date başlığı neden gövdedeki `serverTime`'dan öncelikli
+| Durum | Zaman kaynağı | `trusted` | Sonuç |
+|---|---|---|---|
+| Çapa yok | sistem saati | ✗ | yalnızca evergreen oynar |
+| **Zayıf çapa** | imzasız HTTP `Date` | ✗ | zaman makul olur (1970 damgası yok), bitiş tarihi zorlanmaz |
+| **Güvenilir çapa** | imzalı gövdedeki `serverTime` | ✓ | bitiş tarihi ve daypart zorlanır |
 
-Nokta önbelleği (`proxy_cache_use_stale`) PtMP linki koptuğunda **bayat manifest**
-servis eder. O manifestin gövdesindeki `serverTime` saatlerce eski olabilir; ona
-güvenirsek cihazın saati **geriye gider** ve süresi dolmuş reklamlar yeniden
-geçerli hale gelir. `Date` başlığını ise her zaman son atlayan sunucu üretir.
+Aradan geçen süre her durumda **monotonik** sayaçla (`elapsedRealtime`) hesaplanır.
+
+### Neden imzalı `serverTime` öncelikli (eskiden tersiydi)
+
+Önceki sürüm `Date` başlığını **her zaman** gövdedeki `serverTime`'a tercih ediyordu.
+Gerekçesi şuydu: nokta önbelleği (`proxy_cache_use_stale`) PtMP linki koptuğunda bayat
+manifest servis eder, `Date` başlığını ise son atlayan sunucu üretir — yani tazedir.
+
+Gerekçe tehdit modelini atlıyordu:
+
+- Manifest gövdesi **Ed25519 ile imzalı**: `serverTime`'ı yalnızca özel anahtar sahibi yazabilir
+- `Date` başlığı **imzanın dışında**, düz metin bir başlık; ağ düz HTTP olduğu için
+  AP ağına erişebilen **herkes** onu değiştirebilir
+
+Yani kod, tek güvenilir kaynağı bırakıp tek güvenilmez olanı seçiyordu. Saati geriye
+almak, **süresi dolmuş veya iptal edilmiş** reklamları yeniden yayına sokar.
+
+Bayat manifest sorunu hâlâ çözülüyor, ama doğru araçlarla: geriye giden zaman
+**reddediliyor** (10 dk tolerans) ve makullük süzgeci var. Bayat bir kopya saati geri
+alamaz — yalnızca güncelleyemez. `Date` başlığı ise zayıf çapa olarak kalıyor ve
+gerçek işini yapıyor: güç kesintisinden sonra 1970'te kalan cihazın damgalarını
+düzeltmek. **Başarısız yanıtlarda da** okunuyor (401/500 bile `Date` taşır) —
+eskiden yalnızca başarılı yanıtta okunduğu için saati bozuk bir cihaz manifest
+alamadığı sürece saatini hiç düzeltemiyordu.
+
+### Yeniden başlatma nasıl tespit ediliyor
+
+Eskiden tek test vardı: "monotonik sayaç geriye gitti mi?" Bu **tek yönlüdür** ve
+sessizce yanılır:
+
+> Çapa açılıştan 2 dk sonra alındı (`elapsed=2dk`). Cihaz 5 saat çalıştı, yeniden
+> başladı, 3 dakika sonra bakıyoruz: `elapsedNow=3dk > 2dk` → "yeniden başlamamış".
+> Çapa **5 saat geride** bir zamanı gösteriyor ve **güvenilir** sayılıyor.
+
+Çözüm: çapaya cihazın **açılış sayacı** (`Settings.Global.BOOT_COUNT`) yazılıyor.
+Sistem her açılışta bir artırır; sayaç değiştiyse cihaz yeniden başlamıştır — yön,
+tolerans, tahmin yok. Okunamayan ROM'larda eski sezgiye düşülüyor.
+
+### Çapa yaşı
+
+30 günden eski bir çapa artık güvenilir sayılmıyor. Haftalarca merkezle hiç
+konuşmamış bir cihazın "saatim kesin doğru" demesi ticari olarak yanlıştır: o cihaz
+**iptal edilmiş** bir reklamı hâlâ oynatıyor olabilir. Yaş aşıldığında bitiş tarihli
+içerik durur ve evergreen'e düşülür — güvenli taraf.
+
+### Açılış yayını çapayı silmiyor
+
+`BOOT_COMPLETED` yayını **HOME aktivitesinden sonra** gelir. Yani o alıcı
+çalıştığında oynatıcı açılmış, WiFi gelmiş ve senkron **taze bir çapa** almış
+olabilir. Eskiden `onBoot()` koşulsuz geçersiz kılıyor ve o taze çapayı çöpe
+atıyordu: cihaz, senkronu başarıyla tamamlamışken saatini "şüpheli" sayıp yalnızca
+evergreen oynuyordu — her açılışın ilk turunda. Artık çapanın **bu** açılışta
+alınıp alınmadığına bakılıyor.
+
+### Sistem saati de onarılıyor
+
+`ClockManager`'dan geçen damgalar doğru olur ama **geçmeyen her şey** sistem saatini
+kullanır: Room alanları, dosya zaman damgaları, logcat, TLS geçerlilik kontrolü.
+Güç kesintisinden sonra cihaz 1970'te kalırsa saha teşhisi imkânsızlaşır. Cihaz
+sahibi olduğumuz için güvenilir çapa varken `dpm.setTime()` ile sistem saatini
+düzeltiyoruz (API 28+).
+
+### Saat dilimi sunucudan gelir
+
+Daypart (`"07:00-10:00"`) manifestteki `timezone` alanına göre yorumlanır.
+`ZoneId.systemDefault()` bu stick'lerde dokunulmamış ROM varsayılanıdır, sık sık
+UTC — Türkiye için **3 saat kayma**, yani sabah kuşağı için satılan reklam öğleden
+sonra döner. Değer imzalı gövdede: ağa erişen biri yayın saatini kaydıramaz.
 
 ---
 
@@ -236,9 +305,27 @@ Bu özellik opsiyonel değil: 4G yok, cihazlara noktaya gelmeden erişilemiyor.
 Sessiz güncelleme olmazsa her küçük düzeltme için 50 otobüse fiziksel olarak
 gitmek gerekir — projenin çözmeye çalıştığı problem tam olarak buydu.
 
-- Kademeli yayım: `rolloutGroup` (cihaz grubu ≤ eşik ise günceller)
-- Kurulumdan önce çalışan APK `app/known-good.apk` olarak saklanır
-- Açılış sağlık sayacı: açılışta artar, 2 dk sağlıklı çalışınca sıfırlanır
+- Kademeli yayım: `rolloutGroup` (cihaz grubu ≤ eşik ise günceller). Grup, sunucu
+  cihaza **elle** bir değer atadıysa (`deviceRolloutGroup`, imzalı gövdede) odur;
+  atanmamışsa cihaz `deviceId` hash'inden hesaplar. Böylece "şu iki otobüs kanarya
+  olsun" seçimi gerçekten uygulanır
+- Kurulumdan önce çalışan APK `app/known-good.apk` olarak saklanır — **yalnızca o
+  sürüm sağlıklıysa** (güvenli modda değil, açılış hatası yok). Aksi halde bozuk
+  sürüm sağlam yedeğin üzerine yazılırdı. Kopyalama atomiktir (geçici dosya + rename)
+- Aynı sürüm en fazla 3 kez kurulmayı dener: kurulum hataları çoğunlukla kalıcıdır
+  (imza uyuşmazlığı, bozuk APK, yer yok) ve her deneme pencereden saniyeler yer
+- Kurulum öncesi disk kontrolü: güncelleme aynı anda **üç** APK kopyası ister
+  (indirilen + yedek + PackageInstaller oturumu) ve üzerine dex/oat üretimi
+- Yarım kalmış `PackageInstaller` oturumları her kurulum öncesi bırakılır: güç
+  kesintisi ile kalan oturumlar hem disk yer hem de oturum sınırını doldurur
+- Kurulum sonucu `lastInstallError` alanında **ayrı** tutulur: asenkron geldiği için
+  `lastError` temizliğine yakalanıyor ve hata hiçbir yerde görünmüyordu
+- Kurulum **pencerenin en sonunda** yapılır: `commit()` süreci öldürür, o yüzden
+  önce telemetri/temizlik tamamlanır
+- Açılış sağlık sayacı: açılışlar **arasındaki** süreye göre değerlendirilir
+  (monotonik saat). Aktivitenin normal yeniden oluşması (HDMI çözünürlük değişimi)
+  eskiden sayacı artırıp sıfırlanma şansını yok ediyor ve cihazı yanlışlıkla güvenli
+  moda sokuyordu
 
 ### Otomatik geri dönüş neden yok
 
@@ -259,8 +346,13 @@ Yerine üç şey yapılıyor:
 2 dakika sağlıklı çalışınca güvenli mod kendiliğinden kapanır.
 
 **Kurtarma:** ileriye doğru düzeltme (daha yüksek `versionCode` + `critical=1`).
-Cihaz hiç açılmıyorsa teknisyen `adb install -r -d .../files/app/known-good.apk`
-ile elle döner — saklanan APK'nın amacı budur.
+Bu **tek gerçek** yol.
+
+Saklanan `known-good.apk` bunun yerine geçmez: dosya `/data/data/...` altındadır ve
+release derlemesinde `adb shell` orayı okuyamaz (`run-as` yalnızca `debuggable`
+uygulamalarda çalışır). Kopya, root/kurtarma erişimi olan vakalar için duruyor.
+Cihaz hiç açılmıyor **ve** senkron da olamıyorsa kalan yol fabrika ayarına döndürüp
+yeniden provizyonlamaktır.
 
 **Güç titremesi uyarısı:** açılış sayacı yalnızca gerçek çökme döngüsünü ölçer.
 Otobüsün kontağı kesilip açılırsa `BootReceiver` sayacı sıfırlar — aksi halde

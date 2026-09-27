@@ -38,10 +38,21 @@ object Http {
     fun authed(url: String, token: String): Request.Builder =
         Request.Builder().url(url).header("Authorization", "Bearer $token")
 
-    /** Range istegi: kaldigi bayttan devam. Sunucu 206 Partial Content donmeli. */
-    fun range(url: String, offset: Long, len: Int): Request =
+    /**
+     * Range istegi: kaldigi bayttan devam. Sunucu 206 Partial Content donmeli.
+     *
+     * TOKEN DA GIDIYOR. Sunucu /app (APK) icin kimlik dogrulamasi ISTIYOR - o dosya
+     * PROVISION_SECRET'i gomulu tasiyor ve kimlik dogrulamasiz servis edilmesi,
+     * sunucuya erisen herkesin filoya cihaz sokabilmesi demekti. /content icin de
+     * varsayilan olarak isteniyor.
+     *
+     * Onbellek kutusu Authorization'i yukari gecirir ama onbellek ANAHTARINA katmaz;
+     * boylece bir otobusun cektigi parca digerlerine de servis edilir.
+     */
+    fun range(url: String, offset: Long, len: Int, token: String): Request =
         Request.Builder()
             .url(url)
             .header("Range", "bytes=$offset-${offset + len - 1}")
+            .apply { if (token.isNotBlank()) header("Authorization", "Bearer $token") }
             .build()
 }

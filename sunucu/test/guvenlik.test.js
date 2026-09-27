@@ -190,8 +190,85 @@ test('admin.js icindeki TUM async route handler lari sarmalanmis', async () => {
   assert.deepEqual(sarmalanmamis, [], `sarmalanmamis async uc(ler): ${sarmalanmamis.join(', ')}`)
 })
 
+/**
+ * ONCEDEN: cihaz ve admin kimlik dogrulamasi AYNI IP sayacini paylasiyordu.
+ *
+ * Bu mimaride noktadaki TUM otobusler tek PtMP linkinin arkasinda, yani sunucuya AYNI
+ * IP'den goruluyor. Tokeni iptal edilmis TEK BIR otobus, 15 dakikada 10 deneme yapip o
+ * noktadaki BUTUN otobusleri 15 dakika kilitliyordu - her otobusun gunluk penceresi
+ * birkac dakika oldugu icin bu, tek bozuk cihazin tum hattin yayinini durdurmasiydi.
+ */
+test('bozuk tokenli bir cihaz KOMSU otobusleri kilitlemez', async () => {
+  guard.resetFailures()
+
+  // Saglam bir "komsu otobus" kaydet
+  const kayit = await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: H,
+    body: JSON.stringify({ id: 'KOMSU-01', group: 'hat-1', label: 'komsu' })
+  })
+  assert.equal(kayit.status, 200)
+  const deviceToken = (await kayit.json()).device.token
+  assert.ok(deviceToken)
+
+  // Bozuk cihaz ayni IP'den israrla deniyor
+  for (let i = 0; i < 25; i++) {
+    const r = await fetch(`${base}/api/v1/manifest`, { headers: { authorization: 'Bearer bozuk-otobus-tokeni' } })
+    assert.ok(r.status === 401 || r.status === 429)
+  }
+
+  // Ayni tokenle artik kilitli olmali: bozuk cihaz kendini sinirliyor
+  const kendi = await fetch(`${base}/api/v1/manifest`, { headers: { authorization: 'Bearer bozuk-otobus-tokeni' } })
+  assert.equal(kendi.status, 429, 'israr eden cihaz kendi tokeniyle kilitlenmeli')
+
+  // AMA saglam tokenli komsu otobus (ayni IP) hala calisabilmeli
+  const komsu = await fetch(`${base}/api/v1/manifest`, { headers: { authorization: `Bearer ${deviceToken}` } })
+  assert.equal(komsu.status, 200, 'komsu otobus ayni IP yuzunden kilitlenmemeli')
+
+  guard.resetFailures()
+})
+
+/**
+ * ONCEDEN: app.set('trust proxy', true).
+ *
+ * Bu ayarla Express, X-Forwarded-For'un EN SOLDAKI degerini req.ip yapar - ve o
+ * baslik ISTEMCI tarafindan yazilir. Saldirgan her istekte baska bir XFF yazarak
+ * her seferinde temiz bir sayac alir, yani admin tokenini SINIRSIZ dener.
+ */
+test('X-Forwarded-For dondurerek deneme siniri ATLATILAMAZ', async () => {
+  guard.resetFailures()
+
+  let kilit = false
+  for (let i = 0; i < 20; i++) {
+    const r = await fetch(`${base}/api/admin/state`, {
+      headers: { authorization: 'Bearer yanlis', 'x-forwarded-for': `10.1.2.${i}` }
+    })
+    if (r.status === 429) { kilit = true; break }
+  }
+  assert.ok(kilit, 'XFF degistirmek siniri atlatmamali')
+
+  guard.resetFailures()
+})
+
+/**
+ * APK PROVISION_SECRET'i GOMULU tasiyor. Kimlik dogrulamasiz servis edildiginde
+ * sunucuya erisen herkes onu indirip filoya kendi cihazini sokabilir.
+ */
+test('APK ve icerik kimlik dogrulamasiz indirilemez', async () => {
+  guard.resetFailures()
+
+  const apk = await fetch(`${base}/app/olmayan.apk`)
+  assert.equal(apk.status, 401, '/app tokensiz erisilememeli (404 bile sizdirmamali)')
+
+  const icerik = await fetch(`${base}/content/olmayan.mp4`)
+  assert.equal(icerik.status, 401, '/content varsayilan olarak tokensiz erisilememeli')
+
+  guard.resetFailures()
+})
+
 test('cok fazla basarisiz admin denemesi IP kilitler', async () => {
   // Bu test EN SONDA: kilitlenen IP sonraki testleri etkilerdi.
+  guard.resetFailures()
   let sawLock = false
   for (let i = 0; i < 14; i++) {
     const r = await fetch(`${base}/api/admin/state`, { headers: { authorization: 'Bearer yanlis' } })

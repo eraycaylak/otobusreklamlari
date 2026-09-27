@@ -157,6 +157,9 @@ class Telemetry(
             put("sessionBytes", sessionBytes)
             put("pendingLogs", db.playLog().pendingCount())
             put("lastError", config.lastError)
+            // Kurulum hatasi AYRI alan: asenkron geldigi icin lastError temizligine
+            // yakalaniyordu ve "guncelleme neden gelmedi" sorusu cevapsiz kaliyordu.
+            put("lastInstallError", config.lastInstallError)
             put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("androidSdk", Build.VERSION.SDK_INT)
         }

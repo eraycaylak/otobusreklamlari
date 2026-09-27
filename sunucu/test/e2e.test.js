@@ -172,7 +172,8 @@ test('KRITIK: pencere yetmedi senaryosu - Range ile parcali indirip devam etme',
   // 1. ziyaret: otobus 3 dakika durdu, sadece 2 parca indi
   for (const c of item.chunks.slice(0, 2)) {
     const res = await fetch(`${base}/${item.file}`, {
-      headers: { range: `bytes=${c.offset}-${c.offset + c.len - 1}` }
+      // Token: /content varsayilan olarak kimlik dogrulamasi ister (bkz. index.js).
+      headers: { range: `bytes=${c.offset}-${c.offset + c.len - 1}`, authorization: `Bearer ${deviceToken}` }
     })
     assert.equal(res.status, 206, 'sunucu 206 Partial Content donmeli')
     assert.equal(res.headers.get('content-range'), `bytes ${c.offset}-${c.offset + c.len - 1}/${item.size}`)
@@ -185,7 +186,7 @@ test('KRITIK: pencere yetmedi senaryosu - Range ile parcali indirip devam etme',
   // 2. ziyaret: KALAN parcalar kaldigi yerden
   for (const c of item.chunks.slice(2)) {
     const res = await fetch(`${base}/${item.file}`, {
-      headers: { range: `bytes=${c.offset}-${c.offset + c.len - 1}` }
+      headers: { range: `bytes=${c.offset}-${c.offset + c.len - 1}`, authorization: `Bearer ${deviceToken}` }
     })
     assert.equal(res.status, 206)
     const buf = Buffer.from(await res.arrayBuffer())

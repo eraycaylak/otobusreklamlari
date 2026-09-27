@@ -53,7 +53,25 @@ export const config = {
    * dokunmadigi bir ROM varsayilanidir ve ucuz stick'lerde sik sik UTC cikar - yani
    * sabah kusagi reklami ogleden sonra doner. Sunucu tek kaynak olmali.
    */
-  timezone: process.env.TIMEZONE || 'Europe/Istanbul'
+  timezone: process.env.TIMEZONE || 'Europe/Istanbul',
+
+  /*
+   * Onumuzde kac GUVENILIR vekil var (nokta onbellek kutusu, ters vekil)?
+   *
+   * Deneme sinirinin dayandigi req.ip bu degerden uretiliyor. 'true' vermek
+   * X-Forwarded-For'u istemciye birakir ve siniri tamamen atlatilabilir kilar;
+   * bu yuzden burada bir SAYI istiyoruz. Dogrudan erisimde 0.
+   */
+  trustProxyHops: Number(process.env.TRUST_PROXY_HOPS || 0),
+
+  /*
+   * /content icin cihaz tokeni istenecek mi?
+   *
+   * Varsayilan ACIK. Kapatma kacisi, Authorization basligini gecirmeyen/onbellege
+   * karistiran bir ara sunucunun TUM filonun indirmesini durdurmasina karsi. /app
+   * (APK) icin boyle bir kacis YOK: o dosya PROVISION_SECRET tasiyor.
+   */
+  contentAuth: (process.env.CONTENT_AUTH || '1') !== '0'
 }
 
 export const paths = {

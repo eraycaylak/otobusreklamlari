@@ -57,11 +57,27 @@ class ClockManager(context: Context) {
     fun onServerTime(epochMs: Long, signed: Boolean) {
         if (epochMs <= 0L) return
 
-        if (epochMs < BuildConfig.BUILD_TIME_MS - GERI_TOLERANS_MS ||
+        /*
+         * MAKULLUK SUZGECI - GENIS PAYLA.
+         *
+         * Zemin degeri derleme zamani: bundan ONCEKI bir "sunucu zamani" fiziksel
+         * olarak imkansizdir (yazilim henuz yoktu), dolayisiyla ya bozuk bir yanit ya
+         * da kasitli bir geri alma girisimidir.
+         *
+         * PAY GENIS (30 gun) ve bu bilincli. Dar bir pay tehlikeli bir arıza modu
+         * yaratir: merkez sunucunun saati bir miktar geride kalmissa (VM saat kaymasi,
+         * NTP yok) TUM filo her zamani reddeder, hicbir cihaz bir daha guvenilir saate
+         * ulasamaz ve tarihli TUM kampanyalar sessizce yayindan duser. Yani suzgec,
+         * korumak istedigi seyi fleet capinda bozabilirdi. 30 gun, "1970'e dusmus" ya
+         * da "yillar geriye alinmis" vakalarini yakalar; iyi niyetli kaymayi yakalamaz -
+         * ki geriye gidis kontrolu (asagida) o isi zaten yapiyor.
+         */
+        if (epochMs < BuildConfig.BUILD_TIME_MS - ZEMIN_PAYI_MS ||
             epochMs > BuildConfig.BUILD_TIME_MS + ILERI_SINIR_MS
         ) {
-            Log.w(TAG, "sunucu zamani makul degil ($epochMs) - REDDEDILDI")
-            not("makul olmayan sunucu zamani")
+            val yil = java.time.Instant.ofEpochMilli(epochMs).atZone(java.time.ZoneOffset.UTC).year
+            Log.w(TAG, "sunucu zamani makul degil (yil $yil) - REDDEDILDI")
+            not("makul olmayan sunucu zamani (yil $yil) - sunucu saatini kontrol edin")
             return
         }
 
@@ -197,6 +213,8 @@ class ClockManager(context: Context) {
         const val K_NOTE = "note"
         /** Saat duzeltmesinde kabul edilen geriye sapma (NTP/gecikme paylari icin). */
         const val GERI_TOLERANS_MS = 10 * 60 * 1000L
+        /** Derleme zamani zemininin altinda kabul edilen pay - bkz. makulluk suzgeci. */
+        const val ZEMIN_PAYI_MS = 30L * 24 * 3600 * 1000
         /** Derlemeden sonra kabul edilen en uzak gelecek. */
         const val ILERI_SINIR_MS = 10L * 365 * 24 * 3600 * 1000
         /** Sistem saatini bu farkin altinda kurcalamiyoruz. */

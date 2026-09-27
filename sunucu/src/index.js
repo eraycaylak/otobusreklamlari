@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config, paths, ensureDirs } from './config.js'
 import { load } from './store.js'
-import { deviceRouter } from './routes/device.js'
+import { deviceRouter, auth as deviceAuth } from './routes/device.js'
 import { adminRouter } from './routes/admin.js'
 import { redactUrl } from './guard.js'
 
@@ -23,7 +23,21 @@ if (config.adminToken === 'degistir-beni') {
 
 export const app = express()
 app.disable('x-powered-by')
-app.set('trust proxy', true)
+
+/*
+ * TRUST PROXY: 'true' DEGIL.
+ *
+ * 'true' ile Express, X-Forwarded-For basliginin EN SOLDAKI degerini req.ip yapar ve
+ * o baslik ISTEMCI TARAFINDAN yazilir. Yani deneme siniri tamamen atlatilabilir hale
+ * gelir: saldirgan her istekte baska bir XFF degeri yazar, her seferinde temiz bir
+ * sayac alir ve admin tokenini SINIRSIZ dener. Bu, tek dizelik bir admin tokeni icin
+ * korumanin tamamen kalkmasi demektir.
+ *
+ * Dogru deger onumuzde kac guvenilir vekil oldugudur (nokta onbellek kutusu + varsa
+ * ters vekil). Express bu durumda XFF'nin SAGDAN o kadar atlanmis degerini alir, yani
+ * istemcinin yazdigi kisim yok sayilir. Vekil yoksa 0/'loopback' dogru cevaptir.
+ */
+app.set('trust proxy', config.trustProxyHops)
 
 app.use((req, res, next) => {
   const t = Date.now()
@@ -45,8 +59,27 @@ app.use((req, res, next) => {
  * Icerik adresli (sha256) isimler kullanildigi icin dosyalar degismez -> uzun onbellek.
  */
 const staticOpts = { acceptRanges: true, maxAge: '365d', immutable: true, index: false, dotfiles: 'deny' }
-app.use('/content', express.static(paths.content, staticOpts))
-app.use('/app', express.static(paths.app, staticOpts))
+
+/*
+ * APK SERVISI KIMLIK DOGRULAMASI ISTER - PAZARLIK KONUSU DEGIL.
+ *
+ * /app altindaki APK, PROVISION_SECRET'i GOMULU tasiyor. Kimlik dogrulamasiz
+ * servis edildiginde sunucuya erisebilen herkes APK'yi indirip o sirri cikarabilir
+ * ve kendi cihazini filoya provizyonlayabilir. Uzerine cihaz tokeni alan bir
+ * saldirgan da manifest cekip icerigi gorebilir.
+ *
+ * Icerik (reklam videolari) icin de varsayilan AUTH ACIK, ama kapatilabilir: bu
+ * dosyalar zaten halka acik otobus ekranlarinda yayinlaniyor, dolayisiyla gizlilik
+ * degeri dusuk - ve yanlis yapilandirilmis bir onbellek kutusu TUM filonun icerik
+ * indirmesini durdurabilir. Operatore bu kacisi biraktik; APK icin birakmadik.
+ *
+ * ONBELLEK KUTUSU NOTU: nginx Authorization basligini yukari gecirmeli ve onbellek
+ * anahtarina KATMAMALI; boylece bir cihazin cektigi dosya digerlerine de servis
+ * edilir. Ayrintisi onbellek-kutusu/nginx.conf icinde.
+ */
+app.use('/app', deviceAuth, express.static(paths.app, staticOpts))
+app.use('/content', config.contentAuth ? deviceAuth : (req, res, next) => next(),
+  express.static(paths.content, staticOpts))
 
 app.use('/api/v1', deviceRouter)
 app.use('/api/admin', adminRouter)

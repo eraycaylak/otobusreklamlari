@@ -40,7 +40,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|layoutDirection|locale|navigation|touchscreen|colorMode|grammaticalGender"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Oynatici">
             <intent-filter>

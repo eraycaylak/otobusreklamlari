@@ -63,7 +63,17 @@ data class PlayManifest(
     val app: AppUpdate?,
     val policy: Policy,
     /** Kademeli yayimda kac grup var - SUNUCUDAN gelir, cihazda sabit degildir. */
-    val rolloutGroups: Int
+    val rolloutGroups: Int,
+    /**
+     * Sunucunun BU cihaza elle atadigi kademeli yayim grubu.
+     *
+     * null ise cihaz deviceId hash'inden kendi grubunu hesaplar (varsayilan dagitim).
+     * Doluysa o degeri kullanir: operator "su iki otobus kanarya olsun" dediginde
+     * secim GERCEKTEN uygulanir. Onceden bu alan hic gonderilmiyordu ve elle yapilan
+     * atama sessizce yok sayiliyordu - kademeli yayimin butun amaci (riski ALACAK
+     * cihazi secmek) ortadan kalkiyordu.
+     */
+    val deviceRolloutGroup: Int?
 )
 
 object ManifestParser {
@@ -80,7 +90,9 @@ object ManifestParser {
             items = parseItems(o.optJSONArray("items")),
             app = o.optJSONObject("app")?.let(::parseApp),
             policy = parsePolicy(o.optJSONObject("policy")),
-            rolloutGroups = o.optInt("rolloutGroups", 4).coerceAtLeast(1)
+            rolloutGroups = o.optInt("rolloutGroups", 4).coerceAtLeast(1),
+            deviceRolloutGroup = if (o.isNull("deviceRolloutGroup")) null
+            else o.optInt("deviceRolloutGroup", -1).takeIf { it >= 0 }
         )
     }
 

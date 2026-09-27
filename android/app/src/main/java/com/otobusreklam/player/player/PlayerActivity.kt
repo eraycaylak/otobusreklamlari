@@ -518,6 +518,15 @@ class PlayerActivity : AppCompatActivity() {
      * Uzun sureli bellek sizintilari ve takilmalar icin ucuz bir sigorta.
      */
     private fun checkNightlyReboot() {
+        /*
+         * GUVENLI MODDA YENIDEN BASLATMA YOK.
+         *
+         * Guvenli mod "bu surum acilista cokuyor olabilir" demektir. Boyle bir cihazi
+         * her gece yeniden baslatmak durumu iyilestirmez: her acilis yeni bir cokme
+         * sansi ve o gece boyunca ekran bos kalabilir. Bu modda tek isimiz duzeltilmis
+         * surumu indirebilecek kadar ayakta kalmak.
+         */
+        if (config.safeMode) return
         val saat = clock.snapshot()
         if (!saat.trusted) return
         // Dilim sunucudan: "gece 03:25" isletmenin gecesi olmali, ROM varsayilaninin degil.
@@ -564,6 +573,7 @@ class PlayerActivity : AppCompatActivity() {
                 appendLine("sahip    : " + if (admin.isDeviceOwner) "evet" else "HAYIR")
                 appendLine("sunucu   : ${config.baseUrl}")
                 if (config.lastError.isNotBlank()) appendLine("hata     : ${config.lastError}")
+                if (config.lastInstallError.isNotBlank()) appendLine("kurulum  : ${config.lastInstallError}")
             }
         }
     }

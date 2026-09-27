@@ -119,8 +119,20 @@ class FileStore(context: Context) {
     }
 
     /**
-     * Artik hicbir manifestte gecmeyen dosyalari sil.
-     * EVERGREEN dosyalar bu listeye asla girmez - ekranin son guvencesi onlar.
+     * Artik manifestte GECMEYEN dosyalari sil.
+     *
+     * EVERGREEN AYRICALIGI YOK - ve olmamali. Eski yorum "evergreen dosyalar bu
+     * listeye asla girmez" diyordu; kod bunu yapmiyordu ve yapmasi da yanlis olurdu:
+     * evergreen'i manifestten dusuren tek sey operatorun o kampanyayi KAPATMASIDIR.
+     * Kapatilmis bir kampanyayi diskte tutup oynamaya devam etmek, tam olarak bu
+     * sistemin onlemeye calistigi sey (yetkisi olmayan envanter yayinlamak).
+     *
+     * Silmek GUVENLI, cunku sira soyle: persist() once manifestte olmayan itemlari
+     * items tablosundan dusurur, dolayisiyla o icerik ZATEN oynatilamaz durumdadir.
+     * Yani bu tur, oynanabilir hicbir seyi kaldirmaz - sadece olu dosyayi kaldirir.
+     *
+     * TEK ISTISNA known-good.apk: icerik adresli degil, sabit adli ve bozuk bir
+     * guncellemeden donmenin tek yolu.
      */
     fun cleanup(keepShas: Set<String>) {
         for (dir in listOf(contentDir, apkDir)) {

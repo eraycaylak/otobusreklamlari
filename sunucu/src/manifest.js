@@ -75,7 +75,21 @@ export function buildManifest (device) {
       maxStalenessHours: 72,        // bu sureden uzun senkronsuz kalirsa panelde alarm
       cellularAllowed: false        // 4G yok; ileride acilabilir diye parametre
     },
-    rolloutGroups: config.rolloutGroups
+    rolloutGroups: config.rolloutGroups,
+
+    /*
+     * BU CIHAZIN KADEMELI YAYIM GRUBU.
+     *
+     * Sunucu bu degeri cihaz basina saklıyor ve panelde gosteriyordu ama MANIFESTTE
+     * HIC GONDERMIYORDU. Cihaz ise grubunu kendi deviceId hash'inden hesapliyordu.
+     * Sonuc: operator "su iki otobusu kanarya yap" diye elle atama yaptiginda o atama
+     * SESSIZCE YOK SAYILIYOR ve guncelleme rastgele iki baska otobuse gidiyordu -
+     * yani kademeli yayimin tum amaci (hangi cihazin risk aldigini SECMEK) ortadan
+     * kalkiyordu. Deger imzali govdede: aga erisen biri kendini kanarya yapamaz.
+     */
+    deviceRolloutGroup: Number.isFinite(Number(device.rolloutGroup))
+      ? Number(device.rolloutGroup)
+      : null
   }
 
   return signEnvelope(manifest)

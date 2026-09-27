@@ -34,18 +34,67 @@ class Updater(
         val admin = DeviceAdmin(context)
         if (!admin.hasInstallPermission) {
             Log.e(TAG, "sessiz kurulum yetkisi yok (cihaz sahibi degil) - guncelleme atlandi")
-            config.lastError = "sessiz kurulum yetkisi yok"
+            config.lastInstallError = "sessiz kurulum yetkisi yok (cihaz sahibi degil)"
+            return
+        }
+
+        /*
+         * AYNI BOZUK APK'YI SONSUZA KADAR DENEMEYELIM.
+         *
+         * Kurulum basarisizliklarinin cogu KALICIDIR: imza uyusmazligi, bozuk APK,
+         * surum dusurme, yetersiz alan. Onceden basarisiz surum hic kaydedilmiyordu;
+         * ayni APK her pencerede yeniden yaziliyor ve commit ediliyordu. Her deneme tam
+         * bir APK kopyasini /data'ya yazar ve 3 dakikalik pencereden saniyeler yer -
+         * hem de hicbir zaman basarili olmayacak bir is icin.
+         *
+         * Yeni bir surum yayinlandiginda sayac kendiliginden sifirlanir (surum degisti),
+         * yani fix-forward yolu hic etkilenmiyor.
+         */
+        if (config.failedVersion == update.versionCode && config.failedVersionTries >= MAX_TRIES) {
+            Log.e(TAG, "surum ${update.versionCode} $MAX_TRIES kez kurulamadi - yeni surum beklenecek")
+            config.lastInstallError =
+                "surum ${update.versionCode} $MAX_TRIES kez kurulamadi - DUZELTILMIS BIR SURUM yayinlayin"
             return
         }
 
         val apk = store.contentFile(update.sha256, update.remotePath)
         if (!apk.exists() || apk.length() != update.size) {
             Log.e(TAG, "APK dosyasi eksik/bozuk, kurulum iptal")
+            // Onceden bu dalda hicbir sey yazilmiyordu: kurulumun HIC DENENMEDIGININ
+            // tek izi logcat'ti, yani sahada gorunmuyordu.
+            config.lastInstallError =
+                "APK eksik/bozuk (${apk.length()}/${update.size} bayt) - indirme tamamlanmamis"
             return
         }
 
-        // GERI DONUS ICIN: su an CALISAN surumun APK'sini sakla.
-        // Yeni surum acilista cokerse bu dosya geri kurulur.
+        // Surec olumu/guc kesintisi ile kalmis oturumlar her biri TAM BIR APK kopyasi
+        // tutar; once onlari birak (bkz. birakOksuzOturumlari).
+        birakOksuzOturumlari()
+
+        /*
+         * DISK: GUNCELLEME AYNI ANDA UC KOPYA ISTER.
+         *
+         * 1) indirilen APK            app/<sha>.apk
+         * 2) geri donus kopyasi       app/known-good.apk
+         * 3) PackageInstaller oturumu sistemin kendi hazirlama alani
+         * Uzerine kurulum sirasinda dex/oat uretimi de yer ister.
+         *
+         * Downloader'in 50 MB emniyet payi indirmeyi gecirir ama bu ucluyu KARSILAMAZ:
+         * oturum yazimi ENOSPC ile duser, hata "kurulum basarisiz" olarak gorunur,
+         * sebebi anlasilmaz ve her pencerede tekrarlanir - guncelleme KALICI olarak
+         * tikanir. Onceden bunu hicbir yer kontrol etmiyordu.
+         */
+        val gereken = update.size * 2 + KURULUM_PAYI
+        val bos = store.freeBytes()
+        if (bos in 0 until gereken) {
+            Log.e(TAG, "guncelleme icin yer yok: ${bos / 1_000_000} MB bos, ${gereken / 1_000_000} MB gerekiyor")
+            config.lastInstallError =
+                "guncelleme icin disk yetersiz: ${bos / 1_000_000} MB bos, ${gereken / 1_000_000} MB gerekiyor"
+            return
+        }
+
+        // GERI DONUS ICIN: su an calisan surumun APK'sini sakla (yalnizca o surum
+        // SAGLIKLI ise - bkz. saveKnownGood).
         saveKnownGood()
 
         val installer = context.packageManager.packageInstaller
@@ -59,6 +108,9 @@ class Updater(
                     // Public karsiligi POLICY: "kurulum bir cihaz politikasi geregi yapiliyor".
                     setInstallReason(android.content.pm.PackageManager.INSTALL_REASON_POLICY)
                 }
+                // Sisteme beklenen boyutu bildir: yer yoksa YAZMAYA BASLAMADAN once
+                // hata verir, yarim bir oturum birakmaz.
+                setSize(update.size)
             }
             sessionId = installer.createSession(params)
 
@@ -82,7 +134,7 @@ class Updater(
             Log.i(TAG, "kurulum baslatildi: surum ${update.versionCode}")
         } catch (e: Exception) {
             Log.e(TAG, "kurulum basarisiz", e)
-            config.lastError = "kurulum: ${e.message}"
+            config.lastInstallError = "kurulum: ${e.message}"
         } finally {
             // Commit edilmeyen oturum kendiliginden GITMEZ; sistemde birikir ve
             // uygulama basina oturum siniri dolunca sonraki guncellemeler de
@@ -97,6 +149,28 @@ class Updater(
     }
 
     /**
+     * OKSUZ OTURUMLARI BIRAK.
+     *
+     * finally blogu yalnizca SUREC YASADIGI SURECE calisir. Bu cihazlarda kontak
+     * kapanmasi normal hayat: guc tam kurulum sirasinda giderse oturum commit
+     * edilmemis olarak sistemde kalir ve her biri TAM BIR APK KOPYASINI /data'da
+     * tutar. Birikince iki sey birden olur - disk dolar ve uygulama basina oturum
+     * siniri asilir, yani sonraki TUM guncellemeler basarisiz olur. Hicbir yol
+     * bunlari temizlemiyordu.
+     *
+     * Kendi oturumlarimizi (mySessions) her kurulum oncesi tariyoruz.
+     */
+    private fun birakOksuzOturumlari() {
+        val installer = context.packageManager.packageInstaller
+        runCatching {
+            for (oturum in installer.mySessions) {
+                runCatching { installer.abandonSession(oturum.sessionId) }
+                    .onSuccess { Log.w(TAG, "oksuz kurulum oturumu birakildi: ${oturum.sessionId}") }
+            }
+        }.onFailure { Log.w(TAG, "oturumlar taranamadi: ${it.message}") }
+    }
+
+    /**
      * Calisan APK'yi sakla.
      *
      * NE ICIN DEGIL: otomatik geri donus icin degil. PackageInstaller surum
@@ -104,19 +178,51 @@ class Updater(
      * setRequestDowngrade @SystemApi'dir ve bize acik degildir. Yani "bozuk surumu
      * kendi kendine geri al" diye bir mekanizma stok Android'de KURULAMAZ.
      *
-     * NE ICIN: sahadaki teknisyen icin. Cihaza baglanip
-     *     adb install -r -d /data/data/<paket>/files/app/known-good.apk
-     * ile (-d = downgrade'e izin ver) saglam surume elle donebilir. Dosyanin
-     * cihazda hazir durmasi, otobuse ikinci kez gitmeyi onler.
+     * NE ICIN: elle kurtarma icin. DURUST SINIR: dosya /data/data altindadir ve
+     * release derlemesinde adb shell kullanicisi ORAYI OKUYAMAZ (run-as yalnizca
+     * debuggable uygulamalarda calisir). Yani "teknisyen adb ile geri kurar" sozu
+     * gercekci DEGIL; gercek kurtarma yolu DUZELTILMIS SURUM YAYINLAMAKTIR
+     * (critical=1). Kopya, cihaza root/kurtarma erisimi olan durumlar ve olasi
+     * ileriki bir kurtarma araci icin duruyor - maliyeti bir dosya kadar.
+     *
+     * "CALISTIGI KANITLANMIS" OLMAK ZORUNDA:
+     * Onceden kosulsuz kopyalaniyordu, yani BOZUK bir surum calisirken guncelleme
+     * denenirse saglam yedegin uzerine bozugu yaziyordu - geri donus kopyasi tam da
+     * ihtiyac duyuldugu anda degersiz hale geliyordu. Artik yalnizca calisan surum
+     * saglikliysa (guvenli modda degil, acilis hatasi yok) kopyalaniyor.
      */
     private fun saveKnownGood() {
+        if (config.safeMode || config.startupFailures > 1) {
+            Log.w(TAG, "calisan surum saglikli degil - geri donus kopyasi GUNCELLENMIYOR")
+            return
+        }
         runCatching {
             val running = File(context.applicationInfo.sourceDir)
             val backup = File(store.apkDir, FileStore.KNOWN_GOOD_APK)
-            if (running.exists() && (!backup.exists() || backup.length() != running.length())) {
-                running.copyTo(backup, overwrite = true)
-                config.knownGoodApk = backup.absolutePath
+            if (!running.exists()) return@runCatching
+            if (backup.exists() && backup.length() == running.length()) return@runCatching
+
+            /*
+             * ATOMIK: gecici dosyaya yaz, sonra yerine tasi.
+             *
+             * copyTo(overwrite = true) once hedefi SIFIRLAR. Guc kesintisi veya ENOSPC
+             * tam o anda gelirse gecerli yedek yok olur ve yerinde YARIM bir dosya kalir -
+             * yani "yedek var" gorunur, kurtarma aninda ise ise yaramaz. Tam da korumak
+             * icin var oldugu seyi bozan bir yol.
+             */
+            val tmp = File(store.apkDir, FileStore.KNOWN_GOOD_APK + ".tmp")
+            runCatching { tmp.delete() }
+            running.copyTo(tmp, overwrite = true)
+            if (tmp.length() != running.length()) {
+                tmp.delete()
+                Log.w(TAG, "geri donus kopyasi eksik yazildi, atlandi")
+                return@runCatching
             }
+            if (!tmp.renameTo(backup)) {
+                backup.delete()
+                if (!tmp.renameTo(backup)) { tmp.delete(); return@runCatching }
+            }
+            config.knownGoodApk = backup.absolutePath
         }.onFailure { Log.w(TAG, "geri donus kopyasi alinamadi: ${it.message}") }
     }
 
@@ -130,11 +236,19 @@ class Updater(
      *
      * Gercekte yapabilecegimiz uc sey var, ucunu de yapiyoruz:
      *  1. MERKEZE HABER VER  - lastError panele dusur, operator fix-forward yayinlasin
-     *  2. EKRANI AYAKTA TUT  - zorunlu olmayan alt sistemleri devre disi birak
-     *                          (cogu cokme oynatmada degil, cevre islerde olur)
+     *  2. EKRANI AYAKTA TUT  - zorunlu olmayan isleri atla (bkz. asagidaki liste)
      *  3. SENKRONU ACIK TUT  - duzeltilmis surum ancak boyle ulasabilir
      *
-     * @return true ise cihaz GUVENLI MODDA: yalnizca oynatma ve senkron calisir.
+     * GUVENLI MODDA ATLANAN ISLER (somut liste - bu yorumun dogru kalmasi icin
+     * degistirirken buraya da yazin):
+     *  - kanit karesi uretimi   (en agir is: video cozme + bitmap, bkz. SyncService)
+     *  - gece kontrollu yeniden baslatma (cokuyor olabilecek bir surumu yeniden
+     *    baslatmak durumu iyilestirmez, kotulestirir - bkz. PlayerActivity)
+     *  - geri donus kopyasinin guncellenmesi (bozuk surumu yedek yapmayalim)
+     * ATLANMAYANLAR ve sebebi: oynatma, oynatma kaydi, senkron, log yukleme,
+     * heartbeat ve UYGULAMA GUNCELLEMESI - duzeltilmis surumun gelis yolu budur.
+     *
+     * @return true ise cihaz GUVENLI MODDA.
      */
     fun startupHealthCheck(): Boolean {
         val failures = config.startupFailures
@@ -150,5 +264,9 @@ class Updater(
     private companion object {
         const val TAG = "Updater"
         const val SAFE_MODE_THRESHOLD = 3
+        /** Ayni surum icin en fazla kac kurulum denemesi. */
+        const val MAX_TRIES = 3
+        /** Oturum + dex/oat uretimi icin biraktigimiz pay. */
+        const val KURULUM_PAYI = 150L * 1024 * 1024
     }
 }

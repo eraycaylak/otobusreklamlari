@@ -19,7 +19,19 @@ export async function buildChunks (filePath, chunkSize = config.chunkSize) {
     const buf = Buffer.allocUnsafe(chunkSize)
     while (offset < size) {
       const len = Math.min(chunkSize, size - offset)
-      fs.readSync(fd, buf, 0, len, offset)
+      /*
+       * KISA OKUMA SESSIZCE GECMEZ.
+       *
+       * readSync istenen kadar okumak ZORUNDA DEGIL. Kontrol edilmedigi icin eksik
+       * okunan bir parca, tamponun ONCEKI parcadan kalan baytlariyla birlikte
+       * hash'leniyordu. O hash IMZALI manifeste yaziliyor ve cihaz dogru indirdigi
+       * parcayi bir daha ASLA kabul edemiyor: icerik her pencerede bastan indirilip
+       * ayni yerde tikaniyor, sebebi de hicbir yerde gorunmuyor. Kalici bir zehir.
+       */
+      const okunan = fs.readSync(fd, buf, 0, len, offset)
+      if (okunan !== len) {
+        throw new Error(`parcalama basarisiz: ${filePath} offset ${offset} icin ${len} bayt istendi, ${okunan} okundu`)
+      }
       const slice = buf.subarray(0, len)
       chunks.push({
         i: index,

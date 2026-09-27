@@ -214,8 +214,8 @@ class SyncService : Service() {
         manifest.app?.sha256?.let { keep += it }
         runCatching { store.cleanup(keep) }   // known-good.apk FileStore tarafinda korunuyor
             .onFailure { Log.w(TAG, "dosya temizligi basarisiz: ${it.message}") }
-        runCatching { db.bakim(keep, clock.now() - LOG_SAKLAMA_MS) }
-            .onFailure { Log.w(TAG, "veritabani bakimi basarisiz: ${it.message}") }
+        runCatching { db.oksuzleriTemizle(keep) }
+            .onFailure { Log.w(TAG, "oksuz satir temizligi basarisiz: ${it.message}") }
 
         // Temizlikten SONRA bakiyoruz: hala yer yoksa bu pencerede indirme sansi yok
         // ve sebebi panelde gorunmeli (yoksa cihaz "sessizce guncellenmiyor" olur).
@@ -245,6 +245,21 @@ class SyncService : Service() {
         // Guvenli modda atlaniyor: oncelik duzeltilmis surumu indirebilmek.
         if (!config.safeMode) {
             telemetry.sendProofFrame(client)   // gunde en fazla bir kez, en sona birakilir
+        }
+
+        /*
+         * LOG BAKIMI YUKLEMEDEN SONRA.
+         *
+         * Tavani asan en eski satirlari silen tur BURADA calisiyor, uploadLogs'tan
+         * SONRA. Ondan once calissaydi, tam bu pencerede gonderilebilecek fatura
+         * satirlari gonderilmeden once silinirdi - yani veri kaybini onlemek icin
+         * konan tavan, kaybi kendisi uretirdi.
+         */
+        val silinen = runCatching { db.logBakimi(clock.now() - LOG_SAKLAMA_MS) }
+            .onFailure { Log.w(TAG, "log bakimi basarisiz: ${it.message}") }
+            .getOrDefault(0)
+        if (silinen > 0) {
+            config.lastError = "LOG TASMASI: $silinen yuklenmemis oynatma kaydi silindi"
         }
 
         config.lastSyncAt = clock.now()
@@ -424,7 +439,7 @@ class SyncService : Service() {
      * @return indirilip kurulmayi bekleyen uygulama guncellemesi (varsa)
      */
     private suspend fun downloadInPriorityOrder(manifest: PlayManifest, client: OkHttpClient): AppUpdate? {
-        val update = manifest.app?.takeIf { shouldTakeUpdate(it, manifest.rolloutGroups) }
+        val update = manifest.app?.takeIf { shouldTakeUpdate(it, manifest) }
         var hazirGuncelleme: AppUpdate? = null
 
         val byId = HashMap<String, ManifestItem>()
@@ -489,6 +504,7 @@ class SyncService : Service() {
             size = item.size,
             chunks = item.chunks,
             baseUrl = config.baseUrl,
+            token = config.token,
             client = client,
             parallel = manifest.policy.parallelChunks,
             stillRunning = ::stillRunning
@@ -501,12 +517,17 @@ class SyncService : Service() {
 
     /**
      * Kademeli yayim karari.
+     *
      * Grup sayisi MANIFESTTEN gelir; cihazda sabitlemek, sunucu grup sayisini
-     * degistirdiginde iki tarafin farkli hesap yapmasina yol acardi.
+     * degistirdiginde iki tarafin farkli hesap yapmasina yol acardi. Cihaza ELLE
+     * atanmis bir grup varsa o oncelikli (bkz. deviceRolloutGroup).
      */
-    private fun shouldTakeUpdate(update: AppUpdate, groups: Int): Boolean {
+    private fun shouldTakeUpdate(update: AppUpdate, manifest: PlayManifest): Boolean {
         if (update.versionCode <= BuildConfig.VERSION_CODE) return false
-        return RolloutGroup.of(config.deviceId, groups) <= update.rolloutGroup
+        // Sunucu bu cihaza elle bir grup atadiysa O gecerli: kademeli yayimin amaci
+        // riski ALACAK cihazi secmektir. Atama yoksa deviceId hash'ine dusulur.
+        val grup = manifest.deviceRolloutGroup ?: RolloutGroup.of(config.deviceId, manifest.rolloutGroups)
+        return grup <= update.rolloutGroup
     }
 
     /**
@@ -521,6 +542,7 @@ class SyncService : Service() {
             size = update.size,
             chunks = update.chunks,
             baseUrl = config.baseUrl,
+            token = config.token,
             client = client,
             parallel = manifest.policy.parallelChunks,
             stillRunning = ::stillRunning

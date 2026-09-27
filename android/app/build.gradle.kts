@@ -152,34 +152,74 @@ dependencies {
  * gorunup app-release-UNSIGNED.apk uretiyordu ve hata ancak sahada, provizyon
  * sirasinda ortaya cikiyordu. Simdi derleme burada, anlasilir bir mesajla duruyor.
  */
-if (releaseKeystore == null) {
-    gradle.taskGraph.whenReady {
-        val releaseIsteniyor = allTasks.any {
-            it.name.startsWith("assembleRelease") || it.name.startsWith("bundleRelease")
-        }
-        if (releaseIsteniyor) {
-            throw GradleException(
-                """
-                Release derlemesi icin imzalama anahtari tanimli degil.
+/*
+ * Release derlemesinin ONKOSULLARI - hepsi burada, TEK kapida.
+ *
+ * Kapi artik yalnizca assemble/bundle adlarini taramiyor. `packageRelease` ve
+ * `installRelease` de imzali APK paketler ve onceden bu kapidan SESSIZCE geciyordu:
+ * yani "korunuyoruz" sanilan durumda imzasiz bir APK uretmek hala mumkundu.
+ * Ayrica gomulu anahtar/sir degerleri de burada dogrulaniyor (asagida).
+ */
+gradle.taskGraph.whenReady {
+    val releaseIsteniyor = allTasks.any { t ->
+        val n = t.name
+        (n.startsWith("assemble") || n.startsWith("bundle") || n.startsWith("package") ||
+            n.startsWith("install") || n.startsWith("publish")) && n.contains("Release")
+    }
+    if (!releaseIsteniyor) return@whenReady
 
-                android/gradle.properties dosyasina ekleyin (veya -P ile gecin):
-                  RELEASE_KEYSTORE=/guvenli/yol/reklam.jks
-                  RELEASE_KEYSTORE_PASSWORD=...
-                  RELEASE_KEY_ALIAS=reklam
-                  RELEASE_KEY_PASSWORD=...
+    /*
+     * GOMULU DEGERLER BOS OLAMAZ.
+     *
+     * MANIFEST_PUBLIC_KEY bossa cihaz HICBIR manifesti dogrulayamaz: tum filo
+     * sessizce "imza gecersiz" durumuna duser ve hicbir icerik guncellenemez.
+     * PROVISION_SECRET bossa provizyon yayini bos bir sirla kabul edilir, yani
+     * cihaza fiziksel erisen herkes onu istedigi sunucuya yonlendirebilir.
+     * Ikisi de yalnizca SAHADA anlasilan hatalardir; burada durmasi gerekir.
+     */
+    val eksik = buildList {
+        val pk = project.findProperty("MANIFEST_PUBLIC_KEY") as String?
+        val ps = project.findProperty("PROVISION_SECRET") as String?
+        if (pk.isNullOrBlank()) add("MANIFEST_PUBLIC_KEY (sunucu: npm run anahtar-goster)")
+        else if (pk.length < 40) add("MANIFEST_PUBLIC_KEY cok kisa (${pk.length} karakter) - yer tutucu mu?")
+        if (ps.isNullOrBlank()) add("PROVISION_SECRET (uzun rastgele bir dize uretin)")
+        else if (ps.length < 16) add("PROVISION_SECRET cok kisa (${ps.length} karakter)")
+    }
+    if (eksik.isNotEmpty()) {
+        val liste = eksik.joinToString(separator = "\n              ")
+        throw GradleException(
+            """
+            Release derlemesi icin zorunlu degerler eksik/gecersiz:
+              $liste
 
-                Anahtar yoksa once uretin:
-                  keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
-                          -validity 10000 -alias reklam
+            android/gradle.properties dosyasina ekleyin (veya -P ile gecin).
+            Bu degerler APK'ya GOMULUR; bos gecerse hata ancak sahada anlasilir.
+            """.trimIndent()
+        )
+    }
 
-                DIKKAT: Bu anahtari kaybederseniz sessiz guncelleme bir daha CALISMAZ;
-                her otobuse elle gidip uygulamayi kaldirip yeniden kurmak gerekir.
-                Yedekleyin.
+    if (releaseKeystore == null) {
+        throw GradleException(
+            """
+            Release derlemesi icin imzalama anahtari tanimli degil.
 
-                Yalnizca deneme yapacaksaniz imzasiz yerine debug kullanin:
-                  ./gradlew assembleDebug
-                """.trimIndent()
-            )
-        }
+            android/gradle.properties dosyasina ekleyin (veya -P ile gecin):
+              RELEASE_KEYSTORE=/guvenli/yol/reklam.jks
+              RELEASE_KEYSTORE_PASSWORD=...
+              RELEASE_KEY_ALIAS=reklam
+              RELEASE_KEY_PASSWORD=...
+
+            Anahtar yoksa once uretin:
+              keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
+                      -validity 10000 -alias reklam
+
+            DIKKAT: Bu anahtari kaybederseniz sessiz guncelleme bir daha CALISMAZ;
+            her otobuse elle gidip uygulamayi kaldirip yeniden kurmak gerekir.
+            Yedekleyin.
+
+            Yalnizca deneme yapacaksaniz imzasiz yerine debug kullanin:
+              ./gradlew assembleDebug
+            """.trimIndent()
+        )
     }
 }

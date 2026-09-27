@@ -76,6 +76,53 @@ jobs:
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret
 
+      # -------------------------------------------------------------------
+      # RELEASE VARYANTI DA DERLENIYOR.
+      #
+      # Onceden yalnizca debug derleniyordu, yani minifyEnabled/R8 ve
+      # shrinkResources yolu ILK KEZ SAHAYA CIKIS GUNU deneniyordu. R8'in
+      # kaldirdigi bir sinif (Room olusturulmus kodu, Media3 yansimasi,
+      # Ed25519 kutuphanesi) ancak CIHAZDA, kurulum sirasinda ortaya cikar -
+      # ve o anda geri donus yolu da yoktur. CI'da gecici bir anahtarla
+      # derlemek bu sinifi tamamen kapatiyor.
+      #
+      # Anahtar GECICI ve isten sonra yok olur; uretim APK'si bununla
+      # imzalanmaz (uretim anahtari depoda degildir).
+      - name: Gecici imzalama anahtari uret
+        working-directory: android
+        run: |
+          keytool -genkeypair -v -keystore "$PWD/ci-gecici.jks"             -storepass ciparola -keypass ciparola -alias ci             -keyalg RSA -keysize 2048 -validity 365             -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=TR"
+
+      - name: APK derle (release + R8)
+        working-directory: android
+        run: >
+          ./gradlew --no-daemon assembleRelease
+          -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          -PPROVISION_SECRET=ci-test-secret-uzun-deger
+          -PRELEASE_KEYSTORE=ci-gecici.jks
+          -PRELEASE_KEYSTORE_PASSWORD=ciparola
+          -PRELEASE_KEY_ALIAS=ci
+          -PRELEASE_KEY_PASSWORD=ciparola
+
+      - name: Release APK GERCEKTEN imzali mi
+        working-directory: android
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk)
+          echo "APK: $APK"
+          case "$APK" in *unsigned*) echo "HATA: imzasiz APK uretildi"; exit 1;; esac
+          test -s "$APK"
+
+      # mapping.txt: saha yigin izlerini cozmenin TEK yolu. Yayinlanan her
+      # surum icin saklanmasi gerekir; kaybedilirse o surumden gelen izler
+      # bir daha okunamaz.
+      - name: R8 mapping dosyasini arsivle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-mapping
+          path: android/app/build/outputs/mapping/release/
+          if-no-files-found: warn
+
       - name: Test raporlarini yukle
         if: always()
         uses: actions/upload-artifact@v4

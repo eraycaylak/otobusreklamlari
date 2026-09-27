@@ -22,12 +22,18 @@ docs/              Belgeler
 # 1) Merkez sunucu
 cd sunucu && npm install && npm run anahtar-uret
 ADMIN_TOKEN="uzun-rastgele-bir-dize" npm start     # panel: http://localhost:8080
-npm test                                            # 24 test (uçtan uca + güvenlik)
+npm test                                            # 38 test (uçtan uca + güvenlik + transcode)
 
 # 2) Android
-#    gradle.properties içine MANIFEST_PUBLIC_KEY ve PROVISION_SECRET yazın
 cd android
-./gradlew testDebugUnitTest                         # 36 birim testi
+./gradlew testDebugUnitTest                         # 65 birim testi
+
+#    Release derlemesi ÜÇ değer olmadan başlamaz (derleme anlaşılır bir mesajla durur;
+#    eskiden sessizce imzasız APK üretiyordu ve hata ancak sahada anlaşılıyordu):
+#      MANIFEST_PUBLIC_KEY   -> sunucudan: npm run anahtar-goster
+#      PROVISION_SECRET      -> uzun rastgele bir dize
+#      RELEASE_KEYSTORE + parolalar  -> imza anahtarı (§4.2, kaybetmeyin)
+#    gradle.properties içine yazın, sonra:
 ./gradlew assembleRelease
 
 # 3) Cihaz  (kutudan yeni / fabrika ayarında, HİÇ hesap eklenmemiş olmalı)
@@ -108,8 +114,8 @@ Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda gir
 
 | Ne | Nerede | Kapsam |
 |---|---|---|
-| **Sunucu — 24 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, log tekilleştirme, CSV enjeksiyonu, oran sınırı, kimlik doğrulaması |
-| **Android — 36 test** | `android/app/src/test/` | Saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama, monotonik saat, indirme önceliği, **sunucuyla kademeli yayım hash uyumu** |
+| **Sunucu — 38 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı |
+| **Android — 65 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı), indirme önceliği, **sunucuyla kademeli yayım hash uyumu** |
 | **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
 
 Android'deki saf mantık (`Daypart`, `Weighting`, `ClockMath`, `SyncPlan`, `RolloutGroup`)

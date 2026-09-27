@@ -43,17 +43,19 @@ async function streamToFile (req, filePath) {
 export const adminRouter = express.Router()
 
 function auth (req, res, next) {
+  // Kapsam 'admin': dar esik. Cihaz sayacindan AYRI - onceden ayni sayaci
+  // paylasiyorlardi ve bozuk tokenli bir otobus paneli de kilitliyordu.
   const ip = req.ip || 'bilinmiyor'
-  if (tooManyFailures(ip)) {
+  if (tooManyFailures('admin', ip)) {
     return res.status(429).json({ error: 'cok fazla basarisiz deneme, 15 dakika bekleyin' })
   }
   const header = req.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : (req.query.token || '')
   if (!safeEqual(token, config.adminToken)) {
-    noteFailure(ip)
+    noteFailure('admin', ip)
     return res.status(401).json({ error: 'yetkisiz' })
   }
-  noteSuccess(ip)
+  noteSuccess('admin', ip)
   next()
 }
 adminRouter.use(auth)

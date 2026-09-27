@@ -21,23 +21,19 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playLog(): PlayLogDao
 
     /**
-     * Bakim turu - her senkronun sonunda calisir.
+     * OKSUZ SATIR TEMIZLIGI - indirmeden ONCE calisir.
+     *
+     * Dosyalari FileStore.cleanup() siliyordu ama contents/chunks SATIRLARINI silen
+     * hicbir yol yoktu. Sonuc: manifestten dusen bir icerigin .part dosyasi silinir,
+     * geride done=1 isaretli parca satirlari kalir. O icerik daha sonra geri gelirse
+     * (kampanya yeniden yayina alindi - ayni sha) Downloader "bekleyen parca yok"
+     * gorur, dosya ise diskte olmadigi icin tam dosya hash'i tutmaz ve icerik her
+     * pencerede bastan indirilip her seferinde ayni yerde tikanir. Satirlar da
+     * suresiz birikerek veritabanini sisirir.
      *
      * @param keepShas manifestte HALA duran icerik sha'lari (+ APK)
-     * @param logsBefore bu andan eski YUKLENMIS loglar silinir
      */
-    suspend fun bakim(keepShas: Collection<String>, logsBefore: Long) {
-        /*
-         * OKSUZ SATIRLARI BIRAK.
-         *
-         * Dosyalari FileStore.cleanup() siliyordu ama contents/chunks SATIRLARINI
-         * silen hicbir yol yoktu. Sonuc: manifestten dusen bir icerigin .part dosyasi
-         * silinir, geride done=1 isaretli parca satirlari kalir. O icerik daha sonra
-         * geri gelirse (kampanya yeniden yayina alindi - ayni sha) Downloader
-         * "bekleyen parca yok" gorur, dosya ise diskte olmadigi icin tam dosya hash'i
-         * tutmaz ve icerik her pencerede bastan indirilip her seferinde ayni yerde
-         * tikanir. Satirlar da suresiz birikerek veritabanini sisirir.
-         */
+    suspend fun oksuzleriTemizle(keepShas: Collection<String>) {
         val keep = keepShas.toList()
         if (keep.isEmpty()) {
             contents().deleteAll()
@@ -46,20 +42,33 @@ abstract class AppDatabase : RoomDatabase() {
             contents().deleteNotIn(keep)
             chunks().deleteNotIn(keep)
         }
+    }
 
+    /**
+     * LOG BAKIMI - yukleme denemesinden SONRA calisir.
+     *
+     * SIRA HAYATI: bu tur, tavani asan EN ESKI satirlari siliyor. Yukleme denemesinden
+     * ONCE cagrilirsa, tam o pencerede sunucuya gonderilebilecek FATURA SATIRLARI
+     * gonderilmeden once silinir - yani tavan mekanizmasi, engellemek icin var oldugu
+     * veri kaybini kendisi uretir. Once gonder, sonra bud.
+     *
+     * @param logsBefore bu andan eski YUKLENMIS loglar silinir
+     * @return silinen (kaybedilen) yuklenmemis satir sayisi - 0 degilse panelde gorunmeli
+     */
+    suspend fun logBakimi(logsBefore: Long): Int {
         playLog().purgeOlderThan(logsBefore)
 
         // Yuklenemeyen loglar icin son care tavani (bkz. PlayLogDao.dropOldest).
         val toplam = playLog().totalCount()
-        if (toplam > LOG_TAVANI) {
-            val fazla = toplam - LOG_TAVANI
-            Log.e(
-                TAG,
-                "play_log tavani asildi ($toplam > $LOG_TAVANI): EN ESKI $fazla satir " +
-                    "siliniyor. Bu cihaz uzun suredir log yukleyemiyor - panelde pendingLogs'a bakin."
-            )
-            playLog().dropOldest(fazla)
-        }
+        if (toplam <= LOG_TAVANI) return 0
+
+        val fazla = toplam - LOG_TAVANI
+        Log.e(
+            TAG,
+            "play_log tavani asildi ($toplam > $LOG_TAVANI): EN ESKI $fazla satir " +
+                "siliniyor. Bu cihaz uzun suredir log yukleyemiyor - panelde pendingLogs'a bakin."
+        )
+        playLog().dropOldest(fazla)
 
         /*
          * VACUUM: SQLite silinen alani isletim sistemine GERI VERMEZ, dosya icinde
@@ -67,10 +76,9 @@ abstract class AppDatabase : RoomDatabase() {
          * halde bos alan artmazsa hicbir sey cozulmemis olur - indirme yine durur.
          * Pahali bir islem oldugu icin yalnizca gercekten bir sey sildiysek.
          */
-        if (toplam > LOG_TAVANI) {
-            runCatching { openHelper.writableDatabase.execSQL("VACUUM") }
-                .onFailure { Log.w(TAG, "VACUUM basarisiz: ${it.message}") }
-        }
+        runCatching { openHelper.writableDatabase.execSQL("VACUUM") }
+            .onFailure { Log.w(TAG, "VACUUM basarisiz: ${it.message}") }
+        return fazla
     }
 
     companion object {
