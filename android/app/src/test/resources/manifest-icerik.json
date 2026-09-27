@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "playlistVersion": 5,
+  "deviceId": "OTOBUS-014",
+  "deviceGroup": "hat-14",
+  "generatedAt": "2026-09-27T22:07:00.095Z",
+  "serverTime": "2026-09-27T22:07:00.095Z",
+  "timezone": "Europe/Istanbul",
+  "items": [
+    {
+      "id": "kurum-tanitim",
+      "file": "content/8cb3955332d4a24228964d353cfe4752cc951cc0110f818c731cc74dcfedbcd6.mp4",
+      "size": 204800,
+      "sha256": "8cb3955332d4a24228964d353cfe4752cc951cc0110f818c731cc74dcfedbcd6",
+      "durationMs": 30040,
+      "weight": 1,
+      "validFrom": null,
+      "validUntil": null,
+      "dayparts": [],
+      "evergreen": true,
+      "chunks": [
+        {
+          "i": 0,
+          "offset": 0,
+          "len": 65536,
+          "sha256": "4f6df9a1eb8ab9d5f2b83d8708f4e5c6bb7214f182d4173145e832b9b5cfb9dd"
+        },
+        {
+          "i": 1,
+          "offset": 65536,
+          "len": 65536,
+          "sha256": "1b3dbb6ef69e1877d50ae1fccefd5dd72b86427b51a849b4b66aab1ef6d63e1c"
+        },
+        {
+          "i": 2,
+          "offset": 131072,
+          "len": 65536,
+          "sha256": "9ed438576a7cf9e153b73382e13419edd6bc64644c960730b6b2e98d2f2fedeb"
+        },
+        {
+          "i": 3,
+          "offset": 196608,
+          "len": 8192,
+          "sha256": "a3eeedd11e77312395bfa4f53da04dddb18ad56ad45648f94c249191313eed5e"
+        }
+      ]
+    },
+    {
+      "id": "kahve-30",
+      "file": "content/8cb3955332d4a24228964d353cfe4752cc951cc0110f818c731cc74dcfedbcd6.mp4",
+      "size": 204800,
+      "sha256": "8cb3955332d4a24228964d353cfe4752cc951cc0110f818c731cc74dcfedbcd6",
+      "durationMs": 30040,
+      "weight": 3,
+      "validFrom": "2026-10-01T00:00:00.000Z",
+      "validUntil": "2030-12-31T23:59:00.000Z",
+      "dayparts": [
+        "07:00-10:00",
+        "22:00-02:00"
+      ],
+      "evergreen": false,
+      "chunks": [
+        {
+          "i": 0,
+          "offset": 0,
+          "len": 65536,
+          "sha256": "4f6df9a1eb8ab9d5f2b83d8708f4e5c6bb7214f182d4173145e832b9b5cfb9dd"
+        },
+        {
+          "i": 1,
+          "offset": 65536,
+          "len": 65536,
+          "sha256": "1b3dbb6ef69e1877d50ae1fccefd5dd72b86427b51a849b4b66aab1ef6d63e1c"
+        },
+        {
+          "i": 2,
+          "offset": 131072,
+          "len": 65536,
+          "sha256": "9ed438576a7cf9e153b73382e13419edd6bc64644c960730b6b2e98d2f2fedeb"
+        },
+        {
+          "i": 3,
+          "offset": 196608,
+          "len": 8192,
+          "sha256": "a3eeedd11e77312395bfa4f53da04dddb18ad56ad45648f94c249191313eed5e"
+        }
+      ]
+    }
+  ],
+  "app": {
+    "versionCode": 42,
+    "versionName": "1.4.0",
+    "url": "app/reklam-42.apk",
+    "size": 153600,
+    "sha256": "73e71b715854791505d75b5a98ca6c08cbec924020232d92d03155a67c850d64",
+    "rolloutGroup": 3,
+    "critical": true,
+    "chunks": [
+      {
+        "i": 0,
+        "offset": 0,
+        "len": 65536,
+        "sha256": "8a1a26743cce93aaecc2bb416f06e0ee01771c6d80f490f219dd005594a60706"
+      },
+      {
+        "i": 1,
+        "offset": 65536,
+        "len": 65536,
+        "sha256": "e1166d62c5aa8b6fd6e774320439928ce5945413ebe7ea2c3bb03e028f9c0c60"
+      },
+      {
+        "i": 2,
+        "offset": 131072,
+        "len": 22528,
+        "sha256": "85fc5fd66062cbd299ae91f18dde55c4cea3928bd5f1cc5a597d3b56945bcee9"
+      }
+    ]
+  },
+  "policy": {
+    "staggerMaxMs": 15000,
+    "parallelChunks": 2,
+    "connectTimeoutMs": 8000,
+    "readTimeoutMs": 15000,
+    "volume": 0
+  },
+  "rolloutGroups": 4,
+  "deviceRolloutGroup": 2
+}

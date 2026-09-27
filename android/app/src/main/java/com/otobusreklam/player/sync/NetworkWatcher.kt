@@ -55,12 +55,34 @@ class NetworkWatcher(private val context: Context) {
         }
     }
 
-    fun start() {
+    /**
+     * Dinleyiciyi kur.
+     *
+     * DONUS DEGERI ONEMLI: kayit basarisiz olabilir (ROM'un ConnectivityManager
+     * callback siniri - varsayilan 100 - veya kirpilmis bir servis). Onceden hata
+     * yalnizca loglanIp YUTULUYORDU: cihaz sahaya gidiyor, hicbir tetikleyicisi
+     * olmadigi icin 3 dakikalik pencerelerin HICBIRINDE senkron olmuyor ve bu
+     * hicbir yerde gorunmuyordu. Cagiran taraf artik bunu panele/provizyon
+     * ciktisina tasiyabiliyor.
+     *
+     * @return dinleyici kuruldu mu
+     */
+    fun start(): Boolean {
+        val manager = cm
+        if (manager == null) {
+            Log.e(TAG, "ConnectivityManager yok - ag tetikleyicisi KURULAMADI")
+            return false
+        }
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .build()
-        runCatching { cm?.registerNetworkCallback(request, callback) }
-            .onFailure { Log.e(TAG, "ag dinleyicisi kaydedilemedi", it) }
+        return try {
+            manager.registerNetworkCallback(request, callback)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "ag dinleyicisi kaydedilemedi - cihaz pencereleri kacirir", e)
+            false
+        }
     }
 
     /** Uygulama acilirken WiFi zaten baglIysa pencereyi kacirmayalim. */

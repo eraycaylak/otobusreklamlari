@@ -1,6 +1,5 @@
 package com.otobusreklam.player.manifest
 
-import android.util.Base64
 import net.i2p.crypto.eddsa.EdDSAEngine
 import net.i2p.crypto.eddsa.EdDSAPublicKey
 import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable
@@ -67,10 +66,24 @@ object SignatureVerifier {
             false
         }
 
+    /*
+     * java.util.Base64 - android.util.Base64 DEGIL.
+     *
+     * android.util.Base64 platform sinifidir: JVM birim testinde govdesi yoktur.
+     * Eski halde bu, iki kotu secenekten birine zorluyordu - ya test hic yazilamaz
+     * ya da `isReturnDefaultValues = true` ile cagri SESSIZCE null/0 doner ve test
+     * hicbir sey dogrulamadan GECER. Bu sinifin testi tam olarak "sahte manifest
+     * kabul edilmiyor, GERCEK manifest reddedilmiyor" sorusunu kapatiyor; sessizce
+     * gecen bir test burada en kotu sonucu verir.
+     *
+     * java.util.Base64 API 26+ ve minSdk 24 - ama coreLibraryDesugaring acik, yani
+     * API 24/25'te de calisir. Ayrica bu sinif JVM'de gercek govdeye sahip oldugu icin
+     * birim testi ANLAMLI olur.
+     */
     private fun decode(value: String?, label: String): ByteArray {
         if (value.isNullOrBlank()) throw InvalidSignature("$label bos")
         return try {
-            Base64.decode(value, Base64.DEFAULT)
+            java.util.Base64.getDecoder().decode(value.trim())
         } catch (_: Exception) {
             throw InvalidSignature("$label base64 degil")
         }

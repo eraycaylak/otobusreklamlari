@@ -8,6 +8,7 @@ import com.otobusreklam.player.BuildConfig
 import com.otobusreklam.player.Config
 import com.otobusreklam.player.admin.DeviceAdmin
 import com.otobusreklam.player.sync.NetworkWatcher
+import com.otobusreklam.player.sync.SyncWorker
 import java.security.MessageDigest
 
 /**
@@ -36,6 +37,69 @@ class ProvisionReceiver : BroadcastReceiver() {
     /** resultData YALNIZCA sirali yayinlarda yazilabilir; degilse istisna firlatir. */
     private fun reply(text: String) {
         if (isOrderedBroadcast) resultData = text
+    }
+
+    /**
+     * AG ISLERI ARKA PLANDA, CEVAP GECIKTIRILEREK.
+     *
+     * `wifiHazirla` gercek ILISKLENDIRMEYI bekliyor (birkac saniye). onReceive ana is
+     * parcaciginda kosar ve orada beklemek ANR'dir; goAsync() ile cevabi geciktirip isi
+     * arka plan is parcaciginda yapiyoruz. `am broadcast` sirali yayin sonucunu
+     * bekledigi icin teknisyen ciktiyi yine gorur.
+     *
+     * NEDEN BEKLIYORUZ: `addNetwork` yalnizca bicimsel gecerliligi dogrular, PAROLANIN
+     * DOGRU oldugunu dogrulamaz. Eski "wifi=yazildi" raporu bu yuzden YANILTICIYDI:
+     * yanlis parolayla provizyonlanmis bir stick checklist'i geciyor, otobuse montaj
+     * ediliyor ve aga BIR DAHA HIC baglanmiyordu. Sebep aylarca bulunamazdi.
+     */
+    private fun agIsleriniBitir(context: Context, ssid: String, psk: String, onlar: (String) -> String) {
+        /*
+         * `isOrderedBroadcast` BURADA okunur, arka planda DEGIL.
+         *
+         * PendingResult bu bilgiyi disa acmiyor ve sirali OLMAYAN bir yayinin
+         * PendingResult'ina setResultData cagirmak ISTISNA firlatir. Bayragi onReceive
+         * icinde yakaliyoruz (orada gecerli), sonra arka planda yalnizca ona bakiyoruz.
+         */
+        val sirali = isOrderedBroadcast
+        val pending = goAsync()
+        val app = context.applicationContext
+        Thread({
+            val ozet = try {
+                val admin = DeviceAdmin(app)
+                val hatalar = admin.applyPolicies()
+                val wifi = if (ssid.isNotBlank()) {
+                    // 8 sn: goAsync'in arka plan yayin siniri (60 sn) icinde rahat kalir.
+                    admin.wifiHazirla(ssid, psk, beklemeMs = 8_000L).toString()
+                } else "SSID_YOK"
+
+                val tetikleyici = NetworkWatcher(app).let { nw ->
+                    val ok = nw.start()
+                    nw.triggerIfAlreadyConnected()
+                    ok
+                }
+                /*
+                 * EMNIYET KEMERI BURADA KURULUR.
+                 *
+                 * SyncWorker.schedule yalnizca App.onCreate ve BootReceiver'da
+                 * cagriliyordu; App.onCreate ise provizyonlanmamis cihazda ERKEN
+                 * CIKIYOR. Yani yeni provizyonlanmis bir cihazda periyodik is
+                 * KURULMUYORDU: NetworkWatcher kaydi basarisiz olduysa (ROM'un callback
+                 * limiti) cihazin hicbir tetikleyicisi kalmiyor ve ilk is gunu tamamen
+                 * kaybediliyordu - is ancak gece 03:25 reboot'undan sonra kuruluyordu.
+                 */
+                SyncWorker.schedule(app)
+
+                onlar(
+                    "wifi=$wifi tetikleyici=${if (tetikleyici) "kuruldu" else "KURULAMADI!"}" +
+                        if (hatalar.isEmpty()) "" else " politika_hatasi=${hatalar.joinToString("|")}"
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "provizyon ag isleri basarisiz", e)
+                "HATA: ${e.message}"
+            }
+            if (sirali) runCatching { pending.resultData = ozet }
+            pending.finish()
+        }, "provizyon-ag").start()
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -87,12 +151,10 @@ class ProvisionReceiver : BroadcastReceiver() {
             if (yeniBase.isNotBlank()) config.baseUrl = yeniBase
             if (yeniApi.isNotBlank()) config.apiUrl = yeniApi
 
-            val admin = DeviceAdmin(context)
-            val ok = if (config.ssid.isNotBlank()) admin.ensureWifi(config.ssid, config.psk) else true
-            NetworkWatcher(context).apply { start(); triggerIfAlreadyConnected() }
-
             Log.i(TAG, "ag bilgisi guncellendi: ssid=${config.ssid} base=${config.baseUrl}")
-            reply("TAMAM ag guncellendi cihaz=${config.deviceId} ssid=${config.ssid} wifi=${if (ok) "yazildi" else "YAZILAMADI!"}")
+            agIsleriniBitir(context, config.ssid, config.psk) { durum ->
+                "TAMAM ag guncellendi cihaz=${config.deviceId} ssid=${config.ssid} $durum"
+            }
             return
         }
 
@@ -118,21 +180,11 @@ class ProvisionReceiver : BroadcastReceiver() {
         config.provision(deviceId, token, baseUrl, apiUrl, ssid, psk)
         Log.i(TAG, "provizyon tamam: $deviceId -> $baseUrl")
 
-        val admin = DeviceAdmin(context)
-        admin.applyPolicies()
-        val wifiOk = admin.ensureWifi(ssid, psk)
-
-        NetworkWatcher(context).apply {
-            start()
-            triggerIfAlreadyConnected()
-        }
-
         // adb ciktisinda gorunsun: sahada teknisyen bunu okuyup dogrulayacak
-        reply(buildString {
-            append("TAMAM cihaz=$deviceId ")
-            append("sahip=${if (admin.isDeviceOwner) "evet" else "HAYIR!"} ")
-            append("wifi=${if (wifiOk) "yazildi" else "YAZILAMADI!"}")
-        })
+        val sahip = DeviceAdmin(context).isDeviceOwner
+        agIsleriniBitir(context, ssid, psk) { durum ->
+            "TAMAM cihaz=$deviceId sahip=${if (sahip) "evet" else "HAYIR!"} $durum"
+        }
     }
 
     private fun constantTimeEquals(a: String, b: String): Boolean {

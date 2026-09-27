@@ -20,7 +20,12 @@ class AdminReceiver : DeviceAdminReceiver() {
 
     override fun onEnabled(context: Context, intent: Intent) {
         Log.i(TAG, "cihaz sahibi etkinlestirildi")
-        DeviceAdmin(context).applyPolicies()
+        /*
+         * Tam bu anda izinler ve politikalar YENI kullanilabilir hale geldi: WiFi
+         * profili de dahil her seyi yeniden uygula. `yenidenUygula` arka planda kosar
+         * (WiFi ilisklendirme beklemesi iceriyor, alici ana is parcaciginda beklemez).
+         */
+        AcilisIsleri.yenidenUygula(context)
     }
 
     override fun onDisabled(context: Context, intent: Intent) {

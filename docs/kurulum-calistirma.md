@@ -284,8 +284,24 @@ Cihaz **kutudan yeni çıkmış / fabrika ayarında** ve **hiçbir hesap eklenme
   --grup hat-14
 ```
 
-Çıktıda **`sahip=evet`** ve **`wifi=yazildi`** görmelisiniz. Görmüyorsanız durun —
-device owner olmadan sessiz güncelleme ve otomatik WiFi çalışmaz.
+Çıktıda şunları görmelisiniz:
+
+| Alan | Beklenen | Görmezseniz |
+|---|---|---|
+| `sahip=evet` | cihaz sahibi (device owner) atandı | **Durun.** Sessiz güncelleme, kiosk ve otomatik WiFi çalışmaz. Fabrika ayarlarına dönüp hesap eklemeden tekrar deneyin. |
+| `wifi=BAGLANDI` | cihaz hedef AP'ye **gerçekten bağlandı** | Betik hata verip durur. `BAGLANDI` dışındaki değer parolanın yanlış olabileceğini gösterir. |
+| `tetikleyici=kuruldu` | ağ dinleyicisi kayıtlı | Betik hata verip durur. Dinleyici olmadan cihaz 3 dakikalık pencereleri kaçırır (periyodik iş 15 dakikada bir). |
+| `politika_hatasi=` **yok** | tüm DPM politikaları uygulandı | Uyarı basılır; kiosk / ekran sürekli açık / durum çubuğu eksik çalışabilir. |
+
+> **Neden `wifi=yazildi` değil `wifi=BAGLANDI`:** `addNetwork` yalnızca
+> konfigürasyonun *biçimsel* geçerliliğini doğrular, **parolanın doğru olduğunu
+> doğrulamaz**. Eskiden betik "profil yazıldı" cevabını geçme ölçütü sayıyordu:
+> yanlış parolayla provizyonlanmış bir stick checklist'i geçiyor, otobüse monte
+> ediliyor ve ağa **bir daha hiç bağlanmıyordu** — sebep aylarca bulunamazdı.
+> Cihaz artık profili yazdıktan sonra gerçek ilişkilendirmeyi bekliyor.
+>
+> `wifi=BELIRSIZ` gelirse: profil yazıldı ama SSID okunamadı (konum izni).
+> Bu durumda betik uyarı verir, montajdan önce elle doğrulayın.
 
 ### 5.3 Kütüphaneyi ön-yükleyin
 
@@ -304,7 +320,7 @@ adb shell am broadcast -a com.otobusreklam.player.NETWORK \
   -n com.otobusreklam.player/.provision.ProvisionReceiver \
   --es secret "$PROVISION_SECRET" \
   --es ssid "MASA-AP" --es psk "masa-parolasi"
-# -> TAMAM ag guncellendi cihaz=OTOBUS-014 ssid=MASA-AP wifi=yazildi
+# -> TAMAM ag guncellendi cihaz=OTOBUS-014 ssid=MASA-AP wifi=BAGLANDI tetikleyici=kuruldu
 ```
 
 > **Bu yol aynı zamanda bir operasyon sigortasıdır.** AP parolası değişirse

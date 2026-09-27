@@ -98,16 +98,11 @@ class Downloader(
          * `catch (e: Exception)` bloklarinin HICBIRI onu tutmaz: kiosk uygulamasi
          * ekrani karartarak coker. Bu yuzden basta reddediyoruz.
          */
-        val kapsam = chunks.sumOf { it.len.toLong() }
-        val buyukParca = chunks.firstOrNull { it.len <= 0 || it.len > MAX_PARCA }
-        if (chunks.isEmpty() || kapsam != size || buyukParca != null) {
-            sonHata = when {
-                buyukParca != null ->
-                    "manifest parca boyutu kabul edilemez: idx=${buyukParca.index} len=${buyukParca.len} (sinir $MAX_PARCA)"
-                else ->
-                    "manifest parca listesi bozuk: ${chunks.size} parca $kapsam bayt, beklenen $size"
-            }
-            Log.e(TAG, sonHata!!)
+        // Karar SAF bir nesnede (bkz. IndirmeKurallari): birim testiyle kilitlenmesi
+        // gerekiyordu - dustugunde sonuc sonsuz yeniden indirme ya da yakalanamayan OOM.
+        ParcaDogrulama.kontrol(chunks, size)?.let { sebep ->
+            sonHata = sebep
+            Log.e(TAG, sebep)
             db.contents().upsert(
                 ContentEntity(sha, remotePath, size, ContentState.BAD, System.currentTimeMillis())
             )
@@ -188,7 +183,7 @@ class Downloader(
             // Tutarsiz durum: tum parcalar "indi" isaretli ama yarim dosya yok veya
             // kirpilmis (ornegin diski temizleyen biri, ya da bozuk bir kapanma).
             // RAF ACILMADAN ONCE okunan uzunluga bakiyoruz - bkz. yukaridaki not.
-            if (pending.isEmpty() && oncekiUzunluk != size) {
+            if (SifirlamaKarari.sifirlaMi(pending.isNotEmpty(), oncekiUzunluk, size)) {
                 Log.w(TAG, "parcalar indi isaretli ama dosya $oncekiUzunluk/$size - bastan indirilecek")
                 db.chunks().reset(sha, chunks.map {
                     ChunkEntity(sha, it.index, it.offset, it.len, it.sha256, done = false)
@@ -307,42 +302,25 @@ class Downloader(
         val kanca = currentCoroutineContext().job.invokeOnCompletion { if (it != null) call.cancel() }
         try {
             call.execute().use {
-                val singleChunkWholeFile = totalChunks == 1 && chunk.offset == 0L
-                if (it.code != 206 && !(it.code == 200 && singleChunkWholeFile)) {
-                    Log.w(TAG, "beklenmeyen kod ${it.code} (Range destegi yok mu?) $url")
-                    sonHata = when (it.code) {
-                        200 -> "sunucu Range desteklemiyor (200 dondu): $url"
-                        // Onbellek kutusu Authorization basligini yukari gecirmiyor olabilir.
-                        401, 403 -> "icerik indirme yetkisi reddedildi (HTTP ${it.code}) - onbellek kutusu Authorization basligini geciriyor mu?"
-                        404 -> "icerik sunucuda yok (404): $url"
-                        else -> "icerik indirme HTTP ${it.code}: $url"
-                    }
-                    return false
-                }
-
                 /*
-                 * YANIT GERCEKTEN ISTEDIGIMIZ ARALIK MI?
+                 * YANIT KABUL KURALLARI SAF BIR NESNEDE (bkz. YanitKabul).
                  *
-                 * Onceden yalnizca govdenin uzunluguna bakiliyordu. Yanlis araligi
-                 * (ornegin arada duran bir onbellegin kendi yorumu, ya da `Range`'i
-                 * kismen destekleyen bir proxy) dondurdugunde bu ancak parca hash'inde
-                 * anlasiliyordu - ve teshis edilemez bir "parca hash tutmadi" satiri
-                 * olarak goruluyordu. Sunucu ne dediyse ONCE onu kontrol ediyoruz;
-                 * hata mesaji da artik sebebi soyluyor.
+                 * Uc tuzagin hepsi orada ve hepsi test edilebilir: Range'i yok sayan
+                 * 200, yanlis araligi donduren bir proxy/onbellek, ve kisa/uzun govde.
+                 * Ucu de sessizce BOZUK dosya uretir; yanlis yapilandirilmis bir
+                 * onbellek kutusu tam olarak bunlari dondurur.
                  */
-                if (it.code == 206) {
-                    val cr = it.header("Content-Range").orEmpty()
-                    val beklenen = "bytes ${chunk.offset}-${chunk.offset + chunk.len - 1}/"
-                    if (cr.isNotBlank() && !cr.startsWith(beklenen)) {
-                        sonHata = "sunucu yanlis aralik dondu: istenen $beklenen, gelen $cr"
-                        Log.w(TAG, sonHata!!)
-                        return false
-                    }
-                }
-                val cl = it.body?.contentLength() ?: -1L
-                if (cl >= 0 && cl != chunk.len.toLong()) {
-                    sonHata = "govde uzunlugu beklenenden farkli: $cl != ${chunk.len} ($url)"
-                    Log.w(TAG, sonHata!!)
+                YanitKabul.kabulEdilirMi(
+                    code = it.code,
+                    contentRange = it.header("Content-Range"),
+                    contentLength = it.body?.contentLength() ?: -1L,
+                    offset = chunk.offset,
+                    len = chunk.len,
+                    totalChunks = totalChunks,
+                    url = url
+                )?.let { sebep ->
+                    sonHata = sebep
+                    Log.w(TAG, sebep)
                     return false
                 }
 
@@ -398,11 +376,6 @@ class Downloader(
         const val TAG = "Downloader"
         /** Dosya boyutunun ustune biraktigimiz emniyet payi (veritabani, loglar, gecici dosyalar). */
         const val DISK_MARJI = 50L * 1024 * 1024
-        /**
-         * Tek parca icin kabul edilen en buyuk boyut.
-         * Parca tamamen bellege alindigi icin bu dogrudan bir BELLEK sinirdir.
-         * Sunucu 4 MB parca uretiyor; 16 MB bol pay birakir.
-         */
-        const val MAX_PARCA = 16 * 1024 * 1024
+        // MAX_PARCA -> ParcaDogrulama.MAX_PARCA (saf kural nesnesi, testli)
     }
 }

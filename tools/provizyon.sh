@@ -117,7 +117,42 @@ SONUC=$(adb shell "$YAYIN" 2>&1 | tr -d '\r')
 echo "    $SONUC"
 echo "$SONUC" | grep -q 'TAMAM' || hata "provizyon reddedildi (sir yanlis veya cihaz zaten provizyonlu)"
 echo "$SONUC" | grep -q 'sahip=evet' || echo "    UYARI: cihaz sahibi degil - sessiz guncelleme ve WiFi calismayacak"
-echo "$SONUC" | grep -q 'wifi=yazildi' || echo "    UYARI: WiFi profili yazilamadi"
+
+# ---------------------------------------------------------------------------
+# GECME OLCUTU: "PROFIL YAZILDI" DEGIL "AGA BAGLANDI".
+#
+# `addNetwork` yalnizca konfigurasyonun BICIMSEL gecerliligini dogrular, parolanin
+# DOGRU oldugunu dogrulamaz. Eski `wifi=yazildi` kontrolu bu yuzden YANILTICIYDI:
+# yanlis parolayla provizyonlanmis bir stick bu checklist'i geciyor, otobuse montaj
+# ediliyor ve aga BIR DAHA HIC baglanmiyordu - sebep aylarca bulunamazdi.
+# Cihaz artik gercek ilisklendirmeyi bekleyip sonucu bildiriyor.
+# ---------------------------------------------------------------------------
+case "$SONUC" in
+  *wifi=BAGLANDI*)
+    echo "    WiFi: hedef AP'ye BAGLANDI"
+    ;;
+  *wifi=BELIRSIZ*)
+    echo "    UYARI: WiFi profili yazildi ama baglanti DOGRULANAMADI (SSID okunamadi)."
+    echo "           Konum izni verilmemis olabilir. Montajdan once elle dogrulayin."
+    ;;
+  *wifi=SSID_YOK*)
+    echo "    NOT: --ssid verilmedi, WiFi profili yazilmadi"
+    ;;
+  *)
+    hata "WiFi ILISKLENDIRILEMEDI. Parola yanlis olabilir. Cihaz sahaya GONDERILMEMELI. Yanit: $SONUC"
+    ;;
+esac
+
+# Tetikleyici olmadan cihaz 3 dakikalik pencereleri kacirir: periyodik is 15 dakikada
+# bir, pencere ise 3 dakika. Bu sessiz gecilemez.
+echo "$SONUC" | grep -q 'tetikleyici=kuruldu' ||
+  hata "ag tetikleyicisi KURULAMADI - cihaz pencereleri kacirir. Yanit: $SONUC"
+
+# Uygulanamayan DPM politikasi varsa kiosk/sessiz kurulum eksik calisir.
+if echo "$SONUC" | grep -q 'politika_hatasi='; then
+  echo "    UYARI: uygulanamayan politikalar: $(echo "$SONUC" | sed -n 's/.*politika_hatasi=\([^ ]*\).*/\1/p')"
+  echo "           Kiosk / sessiz guncelleme / ekran surekli acik eksik calisabilir."
+fi
 
 adim "6/6  Dogrulama"
 adb shell am start -n "$PAKET/.player.PlayerActivity" >/dev/null 2>&1 || true

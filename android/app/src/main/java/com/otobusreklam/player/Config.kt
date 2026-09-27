@@ -201,6 +201,59 @@ class Config(context: Context) {
         get() = prefs.getString(K_GOOD_APK, "") ?: ""
         set(v) = prefs.edit().putString(K_GOOD_APK, v).apply()
 
+    /**
+     * UYGULANAMAYAN DPM POLITIKALARI - PANELIN GORMESI GEREKEN SEY.
+     *
+     * applyPolicies() 8 bagimsiz politikayi uyguluyor. Eskiden hepsi TEK bir
+     * runCatching icindeydi: ucuz bir AOSP ROM'unda ilki patlayinca kendisinden
+     * SONRAKI hepsi sessizce atlaniyordu (kiosk paket listesi, HOME kalici tercihi,
+     * keyguard, durum cubugu, ekran surekli acik). Tek iz bir Log.e idi ve sahada
+     * logcat'i kimse okumuyor: 50 cihaz kiosk'suz calisirken heartbeat YESIL
+     * gonderiyordu. Problem ancak bir yolcu kumandayla uygulamadan cikinca
+     * ortaya cikiyordu.
+     *
+     * Bu alan heartbeat ile panele gidiyor ve cihaz KIRMIZI isaretleniyor.
+     */
+    var policyErrors: String
+        get() = prefs.getString(K_POLICY_ERRORS, "") ?: ""
+        set(v) = prefs.edit().putString(K_POLICY_ERRORS, v.take(300)).apply()
+
+    /**
+     * PLANLI YENIDEN BASLATMA ISARETI.
+     *
+     * Gece 03:25-03:35 arasinda kasitli bir reboot yapiyoruz. rebootCount bunu da
+     * sayiyordu, yani sayac gunde en az 1 artiyordu: 200 gun sahada calisan saglikli
+     * bir otobus "reboots: 200" derken, gunde 6 kez gucu kesilen komsusu "206"
+     * diyordu. Panelde ikisi ayirt edilemiyor ve sayacin tek amaci olan "guc problemi"
+     * sinyali HIC calismiyordu.
+     *
+     * commit(): reboot hemen ardindan geliyor, apply() diske yazmaya yetismez.
+     */
+    var plannedReboot: Boolean
+        get() = prefs.getBoolean(K_PLANNED_REBOOT, false)
+        set(v) { prefs.edit().putBoolean(K_PLANNED_REBOOT, v).commit() }
+
+    /**
+     * Sayilan son acilisin BOOT_COUNT degeri.
+     *
+     * AndroidManifest ayni alicida hem BOOT_COMPLETED hem QUICKBOOT_POWERON
+     * dinliyor; ikisini de yayinlayan ucuz ROM'larda tek acilis IKI kez sayiliyordu
+     * (ve startupFailures iki kez sifirlaniyordu). BOOT_COUNT acilis basina bir kez
+     * artar, yani tek dogru de-dup anahtaridir.
+     */
+    var lastCountedBoot: Int
+        get() = prefs.getInt(K_LAST_COUNTED_BOOT, -1)
+        set(v) { prefs.edit().putInt(K_LAST_COUNTED_BOOT, v).commit() }
+
+    /** Son 24 saatin BEKLENMEYEN yeniden baslatma sayaci (gun degisince sifirlanir). */
+    var rebootDay: String
+        get() = prefs.getString(K_REBOOT_DAY, "") ?: ""
+        set(v) { prefs.edit().putString(K_REBOOT_DAY, v).commit() }
+
+    var rebootsToday: Int
+        get() = prefs.getInt(K_REBOOTS_TODAY, 0)
+        set(v) { prefs.edit().putInt(K_REBOOTS_TODAY, v).commit() }
+
     val configured: Boolean
         get() = provisioned && deviceId.isNotBlank() && token.isNotBlank() && baseUrl.isNotBlank()
 
@@ -228,6 +281,11 @@ class Config(context: Context) {
         const val K_PLAYLIST_VERSION = "playlistVersion"
         const val K_TIMEZONE = "timezone"
         const val K_VOLUME = "volume"
+        const val K_POLICY_ERRORS = "policyErrors"
+        const val K_PLANNED_REBOOT = "plannedReboot"
+        const val K_LAST_COUNTED_BOOT = "lastCountedBoot"
+        const val K_REBOOT_DAY = "rebootDay"
+        const val K_REBOOTS_TODAY = "rebootsToday"
         const val K_REBOOTS = "reboots"
         const val K_LAST_ERROR = "lastError"
         const val K_LAST_SYNC = "lastSyncAt"

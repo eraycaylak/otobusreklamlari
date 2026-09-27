@@ -11,6 +11,7 @@ import android.os.Build
 import android.util.Log
 import com.otobusreklam.player.BuildConfig
 import com.otobusreklam.player.Config
+import com.otobusreklam.player.admin.DeviceAdmin
 import com.otobusreklam.player.clock.ClockManager
 import com.otobusreklam.player.data.AppDatabase
 import com.otobusreklam.player.data.ContentState
@@ -39,6 +40,9 @@ class Telemetry(
     private val db: AppDatabase,
     private val clock: ClockManager
 ) {
+
+    /** Cihaz sahibi durumu heartbeat'e girsin diye (ucuz bir DPM sorgusu). */
+    private val admin by lazy { DeviceAdmin(context) }
 
     /**
      * Oynatma loglari.
@@ -150,6 +154,27 @@ class Telemetry(
             put("freeBytes", store.freeBytes())
             put("rssi", wifiRssi())
             put("reboots", config.rebootCount)
+            /*
+             * UPTIME + GUNLUK REBOOT: ASIL "GUC PROBLEMI" SINYALI.
+             *
+             * Kumulatif `reboots` tek basina alarm uretemez: 200 gun sahada calisan
+             * saglikli bir otobus ile gunde 6 kez gucu kesilen komsusu panelde ayni
+             * gorunur (planli gece reboot'u da sayiliyordu). Bu iki alan farki
+             * dogrudan gosterir - kisa uptime + yuksek gunluk sayi = besleme problemi.
+             */
+            put("uptimeMs", android.os.SystemClock.elapsedRealtime())
+            put("rebootsSince24h", config.rebootsToday)
+            /*
+             * CIHAZ SAHIBI DURUMU VE POLITIKA HATALARI.
+             *
+             * Projenin temel varsayimi "device owner'iz": sessiz kurulum, kiosk, WiFi
+             * profili ve planli reboot hepsi buna bagli. Buna ragmen bu bilgi hicbir
+             * uzaktan kanalda YOKTU - yalnizca cihazin yanina gidip teshis ekranini
+             * acarak gorulebiliyordu. Bir ROM degisikligi DPM politikalarini
+             * dusurdugunde 50 cihaz kiosk'suz calisiyor ve heartbeat YESIL gonderiyordu.
+             */
+            put("deviceOwner", admin.isDeviceOwner)
+            put("policyErrors", config.policyErrors)
             put("clockTrusted", saat.trusted)
             // Sebep + not: "saat supheli" tek basina hicbir mudahaleye yol gostermiyor.
             put("clockNote", listOf(saat.reason, clock.note).filter { it.isNotBlank() }.joinToString(" / "))

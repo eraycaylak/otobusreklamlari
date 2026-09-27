@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import com.otobusreklam.player.Config
 
 /**
  * Cihaz sahibi yetkilerinin tek toplandigi yer.
@@ -30,19 +31,52 @@ class DeviceAdmin(private val context: Context) {
             dpm?.isDeviceOwnerApp(context.packageName) == true
         } catch (_: Exception) { false }
 
-    /** Provizyondan sonra bir kez, sonra her acilista cagrilir (idempotent). */
-    fun applyPolicies() {
-        val dpm = dpm ?: return
+    /**
+     * Provizyondan sonra bir kez, sonra her acilista cagrilir (idempotent).
+     *
+     * HER POLITIKA KENDI try'INDA - VE BASARISIZLIK PANELE GIDIYOR.
+     *
+     * Eskiden 8 bagimsiz politika TEK bir runCatching icindeydi. Ucuz bir AOSP
+     * ROM'unda (kirpilmis DPM, setSystemUpdatePolicy destegi olmayan surumler tipik)
+     * ilki SecurityException firlatinca kendisinden SONRAKI hepsi sessizce atlaniyordu:
+     * kiosk paket listesi yazilmiyor, HOME kalici tercihi yazilmiyor, keyguard
+     * kapatilmiyor, durum cubugu acik kaliyor. Uygulama yine aciliyor ve heartbeat
+     * YESIL gonderiyordu - problem ancak bir otobuste TV'de kilit ekrani goruldugunde
+     * ya da bir yolcu kumandayla uygulamadan cikinca ortaya cikiyordu.
+     *
+     * @return uygulanamayan politikalarin adlari (bos = hepsi tamam)
+     */
+    fun applyPolicies(): List<String> {
+        val dpm = dpm
+        val config = Config(context)
+        if (dpm == null) {
+            config.policyErrors = "DevicePolicyManager yok"
+            return listOf("DevicePolicyManager yok")
+        }
         if (!isDeviceOwner) {
             Log.w(TAG, "cihaz sahibi DEGIL - kiosk/sessiz guncelleme/WiFi devre disi")
-            return
+            config.policyErrors = "cihaz sahibi DEGIL"
+            return listOf("cihaz sahibi DEGIL")
         }
-        runCatching {
-            // Kiosk icin izin verilen tek paket biziz
-            dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
 
-            // HOME'u kalici olarak biz devralalim: uygulama cokerse Android bizi
-            // yeniden baslatir. Sistemin bize verdigi bedava watchdog budur.
+        val hatalar = mutableListOf<String>()
+        fun politika(ad: String, blok: () -> Unit) {
+            try {
+                blok()
+            } catch (e: Exception) {
+                Log.e(TAG, "politika uygulanamadi: $ad", e)
+                hatalar += ad
+            }
+        }
+
+        // Kiosk icin izin verilen tek paket biziz
+        politika("lockTaskPackages") {
+            dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
+        }
+
+        // HOME'u kalici olarak biz devralalim: uygulama cokerse Android bizi
+        // yeniden baslatir. Sistemin bize verdigi bedava watchdog budur.
+        politika("home") {
             val home = IntentFilter(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
                 addCategory(Intent.CATEGORY_DEFAULT)
@@ -51,37 +85,49 @@ class DeviceAdmin(private val context: Context) {
                 admin, home,
                 ComponentName(context, "com.otobusreklam.player.player.PlayerActivity")
             )
+        }
 
-            // Izinleri otomatik ver: sahada kimse onay ekranina basmayacak
+        // Izinleri otomatik ver: sahada kimse onay ekranina basmayacak
+        politika("permissionPolicy") {
             dpm.setPermissionPolicy(admin, DevicePolicyManager.PERMISSION_POLICY_AUTO_GRANT)
-            // IKISI DE veriliyor: Android 12+ FINE'i COARSE olmadan kabul etmiyor.
+        }
+        // IKISI DE veriliyor: Android 12+ FINE'i COARSE olmadan kabul etmiyor.
+        politika("konumIzni") {
             grant(android.Manifest.permission.ACCESS_FINE_LOCATION)
             grant(android.Manifest.permission.ACCESS_COARSE_LOCATION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                grant("android.permission.POST_NOTIFICATIONS")
-            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            politika("bildirimIzni") { grant("android.permission.POST_NOTIFICATIONS") }
+        }
 
-            // Ekran surekli acik kalsin (cihaz zaten surekli beslemede)
+        // Ekran surekli acik kalsin (cihaz zaten surekli beslemede)
+        politika("stayOn") {
             dpm.setGlobalSetting(
                 admin, Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
                 (BATTERY_PLUGGED_AC or BATTERY_PLUGGED_USB or BATTERY_PLUGGED_WIRELESS).toString()
             )
-            // ADB BILINCLI OLARAK ACILMIYOR: 50 cihazda kalici acik ADB,
-            // paylasilan AP VLAN'inda herkesin cihaza baglanabilmesi demektir.
-            // Servis gerektiginde tekniker ilgili cihazda elle acar.
+        }
+        // ADB BILINCLI OLARAK ACILMIYOR: 50 cihazda kalici acik ADB,
+        // paylasilan AP VLAN'inda herkesin cihaza baglanabilmesi demektir.
+        // Servis gerektiginde tekniker ilgili cihazda elle acar.
 
-            // minSdk 24 oldugu icin API 23 (M) kontrolu GEREKSIZDI: her zaman dogru.
-            // Olu bir kosul, okuyana "bu cagri bazi cihazlarda atlaniyor" izlenimi
-            // verir ve gercek surum kontrollerinin ciddiyetini azaltir.
-            dpm.setKeyguardDisabled(admin, true)
-            dpm.setStatusBarDisabled(admin, true)
+        // minSdk 24 oldugu icin API 23 (M) kontrolu GEREKSIZDI: her zaman dogru.
+        politika("keyguard") { dpm.setKeyguardDisabled(admin, true) }
+        politika("statusBar") { dpm.setStatusBarDisabled(admin, true) }
 
-            // Sistem guncellemeleri yayin saatinde cihazi kapatmasin
+        // Sistem guncellemeleri yayin saatinde cihazi kapatmasin
+        politika("systemUpdatePolicy") {
             dpm.setSystemUpdatePolicy(
                 admin,
                 android.app.admin.SystemUpdatePolicy.createWindowedInstallPolicy(180, 300) // 03:00-05:00
             )
-        }.onFailure { Log.e(TAG, "politikalar uygulanamadi", it) }
+        }
+
+        config.policyErrors = hatalar.joinToString(", ")
+        if (hatalar.isNotEmpty()) {
+            Log.e(TAG, "UYGULANAMAYAN POLITIKALAR: ${hatalar.joinToString(", ")}")
+        }
+        return hatalar
     }
 
     private fun grant(permission: String) {
@@ -209,6 +255,82 @@ class DeviceAdmin(private val context: Context) {
             Log.e(TAG, "WiFi profili yazilamadi (ROM/surucu hatasi?)", e)
             false
         }
+    }
+
+
+    /** ensureWifi + gercek ilisklendirme beklemesinin sonucu. */
+    enum class WifiSonuc { YAZILAMADI, YAZILDI_BAGLANMADI, BAGLANDI, BELIRSIZ }
+
+    /**
+     * SU AN hedef AP'ye bagli miyiz?
+     *
+     * `addNetwork` yalnizca konfigurasyonun BICIMSEL gecerliligini dogrular; parolanin
+     * DOGRU oldugunu dogrulamaz. Yani "profil yazildi" ile "aga baglanabiliyor" ayni
+     * sey DEGIL - ve provizyon betigi tam olarak bu ikisini karistiriyordu: yanlis
+     * parolayla provizyonlanmis bir stick "wifi=yazildi" raporu veriyor, checklist
+     * geciyor, otobuse montaj ediliyor ve aga BIR DAHA HIC baglanmiyordu.
+     *
+     * DIKKAT: Android 8.1+ konum izni olmadan SSID yerine "<unknown ssid>" doner.
+     * O durumda "baglanmadi" demek YANLIS olur; BELIRSIZ donuyoruz.
+     */
+    @Suppress("DEPRECATION")
+    fun wifiBagliMi(ssid: String): WifiSonuc {
+        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: return WifiSonuc.BELIRSIZ
+        return try {
+            val info = wm.connectionInfo ?: return WifiSonuc.YAZILDI_BAGLANMADI
+            val ad = info.ssid?.trim('"').orEmpty()
+            when {
+                ad == ssid -> WifiSonuc.BAGLANDI
+                ad.isBlank() || ad.contains("unknown", ignoreCase = true) -> WifiSonuc.BELIRSIZ
+                // Baska bir aga bagliyiz: bu da "hedefe baglanamadi" demektir.
+                else -> WifiSonuc.YAZILDI_BAGLANMADI
+            }
+        } catch (e: SecurityException) {
+            WifiSonuc.BELIRSIZ
+        } catch (e: Exception) {
+            Log.w(TAG, "WiFi durumu okunamadi: ${e.message}")
+            WifiSonuc.BELIRSIZ
+        }
+    }
+
+    /**
+     * Profili yaz VE gercekten ilisklendigini bekle.
+     *
+     * ANA IS PARCACIGINDAN CAGIRMAYIN: icinde bekleme var. Cagiranlar arka planda
+     * (provizyon aliciisinin goAsync'i, App.onCreate'in arka plan is parcacigi,
+     * BootReceiver'in goAsync'i).
+     *
+     * Basarisizlikta config.lastError'a yaziyoruz: sahada "neden aga baglanmiyor?"
+     * sorusunun cevabi panelde gorunsun. Yanlis parola bu yolla tespit edilir -
+     * addNetwork'un donusu bunu ASLA gostermez.
+     */
+    fun wifiHazirla(ssid: String, psk: String, beklemeMs: Long = 15_000L): WifiSonuc {
+        if (ssid.isBlank()) return WifiSonuc.YAZILAMADI
+        val config = Config(context)
+        if (!ensureWifi(ssid, psk)) {
+            config.lastError = "WiFi profili YAZILAMADI (cihaz sahibi mi? izin var mi?)"
+            return WifiSonuc.YAZILAMADI
+        }
+
+        val bitis = android.os.SystemClock.elapsedRealtime() + beklemeMs
+        var son = WifiSonuc.YAZILDI_BAGLANMADI
+        while (android.os.SystemClock.elapsedRealtime() < bitis) {
+            son = wifiBagliMi(ssid)
+            if (son == WifiSonuc.BAGLANDI) return son
+            try {
+                Thread.sleep(500)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return son
+            }
+        }
+        if (son == WifiSonuc.YAZILDI_BAGLANMADI) {
+            config.lastError = "WiFi ilisklendirilemedi: \"$ssid\" - parola yanlis olabilir " +
+                "(profil yazildi ama ${beklemeMs / 1000} sn icinde baglanti kurulmadi)"
+            Log.e(TAG, config.lastError)
+        }
+        return son
     }
 
     /**

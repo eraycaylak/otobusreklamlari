@@ -105,9 +105,22 @@ android {
         resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/DEPENDENCIES")
     }
 
+    /*
+     * isReturnDefaultValues BILINCLI OLARAK YOK.
+     *
+     * Acik oldugunda, Android platform siniflarina dokunan her birim testi SESSIZCE
+     * gecer: cagri "Stub!" ile patlamak yerine null/0/false doner. Yani imza
+     * dogrulama testi "imza gecerli" sanip gecebilir, manifest ayristirma testi bos
+     * bir nesne uzerinde assert edip gecebilir. Bu iki test tam olarak "sahte manifest
+     * sokulamiyor" ve "gercek manifest reddedilmiyor" sorularini kapatiyor - sessizce
+     * gecen bir test burada korumanin tamamen kalkmasi demektir.
+     *
+     * Kapali oldugunda platform sinifina dokunan test GURULTULU patlar ve biz de
+     * gerekli yerde gercek bir uygulamaya geciyoruz (bkz. SignatureVerifier.decode ->
+     * java.util.Base64, ve asagidaki org.json bagimliligi).
+     */
     testOptions {
         unitTests {
-            isReturnDefaultValues = true
             all { it.testLogging { events("passed", "skipped", "failed") } }
         }
     }
@@ -142,6 +155,16 @@ dependencies {
     // Bu siniflar bilerek Android'e bagimsiz tutuldu; Robolectric/emulator gerekmez.
     //   ./gradlew :app:testDebugUnitTest
     testImplementation(libs.junit)
+    /*
+     * org.json - BIRIM TESTLERI ICIN GERCEK AYRISTIRICI.
+     *
+     * `org.json.JSONObject` Android'de platform sinifidir: JVM birim testinde govdesi
+     * YOKTUR. ManifestParser ve SignatureVerifier bu sinifi kullaniyor, yani onlarin
+     * testi bu bagimlilik olmadan ya derlenmez ya da (isReturnDefaultValues acikken)
+     * hicbir sey dogrulamadan gecer. Ayni API'nin referans uygulamasini test siniflarina
+     * koyarak protokol sozlesmesini GERCEKTEN test edebiliyoruz.
+     */
+    testImplementation(libs.json)
 }
 
 

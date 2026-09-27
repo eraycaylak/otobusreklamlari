@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.otobusreklam.player.BuildConfig
 import com.otobusreklam.player.Config
 import com.otobusreklam.player.R
+import com.otobusreklam.player.admin.AcilisIsleri
 import com.otobusreklam.player.admin.DeviceAdmin
 import com.otobusreklam.player.clock.ClockManager
 import com.otobusreklam.player.data.AppDatabase
@@ -140,8 +141,14 @@ class PlayerActivity : AppCompatActivity() {
          * (ROM farki, kaldirilmis yetki) tum aktiviteyi dusurup ekrani karartirdi.
          * Reklam oynatmak, kiosk kilidinden daha onceliklidir.
          */
-        runCatching { admin.applyPolicies() }
-            .onFailure { Log.e(TAG, "cihaz politikalari uygulanamadi, devam ediliyor", it) }
+        /*
+         * POLITIKALAR ARKA PLANDA: 8 DPM binder cagrisi (icinde sistem tarafinda XML
+         * yazimi olan addPersistentPreferredActivity) burada ana is parcaciginda
+         * kosuyordu ve onCreate'i bekletiyordu - yani ekranda ilk karenin gorunmesi
+         * geciktiriyordu. AcilisIsleri surec basina bir kez, arka planda kosar.
+         * enterKiosk ANA IS PARCACIGINDA kalmak ZORUNDA: Activity uzerinde calisir.
+         */
+        AcilisIsleri.birKez(applicationContext)
         runCatching { admin.enterKiosk(this) }
             .onFailure { Log.e(TAG, "kiosk moduna girilemedi, devam ediliyor", it) }
 
@@ -546,6 +553,18 @@ class PlayerActivity : AppCompatActivity() {
         if (local.minute !in REBOOT_MINUTE_FROM..REBOOT_MINUTE_TO) return
 
         config.lastRebootDay = today
+        /*
+         * PLANLI OLDUGUNU ISARETLE.
+         *
+         * BootReceiver bu isareti gorup rebootCount'u ARTIRMAZ. Aksi halde her gecenin
+         * kasitli reboot'u sayaca giriyor ve sayacin tek amaci olan "guc problemi"
+         * sinyali kullanilamaz hale geliyordu: 200 gun calisan saglikli bir otobus ile
+         * gunde 6 kez gucu kesilen komsusu panelde ayni gorunuyordu.
+         *
+         * commit() ile yaziliyor (bkz. Config.plannedReboot): reboot hemen ardindan
+         * geliyor, apply() diske yazmaya yetismez.
+         */
+        config.plannedReboot = true
         Log.i(TAG, "gece kontrollu yeniden baslatma")
         flushCurrentPlay(completed = false, bekleyerek = true)
         admin.reboot()
