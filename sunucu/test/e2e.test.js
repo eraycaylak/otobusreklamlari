@@ -461,7 +461,8 @@ test('pencere raporu: 3 dakika yetiyor mu sorusunu olcer', async () => {
   const csv = await (await fetch(`${base}/api/admin/pencere-raporu.csv`, { headers: adminHeaders })).text()
   assert.match(csv, /otobus;gun;senkron_sayisi;toplam_MB;ortalama_pencere_MB;en_buyuk_pencere_MB/)
 
-  const satir = csv.split('\n').find((l) => l.startsWith('OTOBUS-014'))
+  // csvSafe artik alanlari TAM ALINTILIYOR (RFC 4180) - sutun kaymasina karsi.
+  const satir = csv.split('\n').find((l) => l.startsWith('"OTOBUS-014"'))
   assert.ok(satir, 'cihaz satiri raporda olmali')
   const [, , senkron, toplam, ortalama, enBuyuk] = satir.split(';')
   assert.equal(Number(senkron) >= 3, true, `en az 3 senkron beklenir, ${senkron} geldi`)
@@ -494,7 +495,7 @@ test('EKRAN BOS ve guvenli mod panele ulasir', async () => {
 test('oynatma kaniti raporu CSV uretir', async () => {
   const csv = await (await fetch(`${base}/api/admin/report.csv`, { headers: adminHeaders })).text()
   assert.match(csv, /kampanya;reklamveren;otobus;gun;oynatma_sayisi/)
-  assert.match(csv, /kahve-30;Kahve A\.S\.;OTOBUS-014;.*;3;90;0/)
+  assert.match(csv, /"kahve-30";"Kahve A\.S\.";"OTOBUS-014";.*;3;90;0/)
 })
 
 test('temizlik kullanilmayan icerigi bildirir ve siler', async () => {

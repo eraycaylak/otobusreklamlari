@@ -33,8 +33,20 @@
   <input id="token" type="password" placeholder="admin token" style="width:240px">
   <button onclick="init()">Bağlan</button>
   <span id="ver" class="dim"></span>
+  <!-- Son basarili yenilemenin saati: donmus panel ile calisan panel bu olmadan
+       gorsel olarak AYIRT EDILEMIYORDU. -->
+  <span id="sonGuncelleme" class="dim"></span>
 </header>
 <main>
+  <!--
+    BAGLANTI SERIDI. Otomatik yenileme sessizce basarisiz oldugunda panel son
+    basarili goruntude DONUYOR ve operator "tum otobusler iyi" goruyordu - oysa o
+    arada cihazlar EKRAN BOS'a dusmus olabilir. Bu serit gorunur oldugunda ekrandaki
+    her sey bayattir.
+  -->
+  <div id="baglanti" style="display:none;background:#4a0f0f;border:1px solid #a33;
+       border-radius:6px;padding:10px 12px;margin-bottom:12px;font-weight:600"></div>
+
   <!--
     Uyari seridi. Panelin en ustunde, cihaz tablosundan ONCE: buradaki iki durum
     (bir grubun evergreen'i olmamasi, suresi gecmis ama acik kampanya) sessizce
@@ -43,6 +55,7 @@
   <div id="uyarilar" style="display:none;background:#3a2a00;border:1px solid #7a5c00;
        border-radius:6px;padding:10px 12px;margin-bottom:14px;line-height:1.6"></div>
 
+  <div id="tablolar">
   <section>
     <h2>Cihazlar</h2>
     <div class="row">
@@ -65,7 +78,13 @@
     <h2>İçerik yükle</h2>
     <div class="row">
       <input id="file" type="file" accept="video/*">
-      <button onclick="upload()">Yükle ve sıkıştır</button>
+      <button id="uploadBtn" onclick="upload()">Yükle ve sıkıştır</button>
+      <!-- Ilerleme + buton kilidi: 500 MB'lik bir yuklemede operator dakikalarca
+           tek sabit satira bakiyor ve ayni dosyayi ikinci kez yuklemeye baslamasi
+           cok kolaydi (iki transcode mini PC'nin CPU'sunu doyurur ve o sirada
+           manifest isteyen otobusler zaman asimina ugrar). -->
+      <progress id="ilerleme" max="100" value="0" style="display:none;width:180px"></progress>
+      <span id="ilerlemeMetin" class="dim"></span>
       <span class="dim">Sunucu 2,5 Mbps H.264'e çevirir (50 MB → ~10 MB)</span>
     </div>
     <div id="log"></div>
@@ -78,7 +97,7 @@
       <input id="cTitle" placeholder="başlık" style="width:150px">
       <input id="cAdv" placeholder="reklamveren" style="width:150px">
       <input id="cFrom" type="datetime-local" title="yayına giriş">
-      <input id="cUntil" type="datetime-local" title="bitiş (zorunlu)">
+      <input id="cUntil" type="datetime-local" required title="bitiş (zorunlu)">
       <input id="cWeight" type="number" min="1" value="1" style="width:70px" title="ağırlık">
       <input id="cGroups" placeholder="gruplar (virgülle)" style="width:150px">
       <input id="cDayparts" placeholder="07:00-10:00,17:00-20:00" style="width:200px"
@@ -86,6 +105,9 @@
       <label class="dim"><input id="cEver" type="checkbox"> evergreen</label>
       <button onclick="addCampaign()">Kaydet</button>
     </div>
+    <!-- Kampanya bolumunun KENDI durum satiri: hata mesaji "Icerik yukle"
+         bolumundeki log kutusuna dusunce operator onu hic gormuyordu. -->
+    <div id="campaignMsg" class="dim" style="display:none;margin:0 0 8px"></div>
     <p class="dim" style="margin:0 0 10px">
       Bitiş tarihi zorunlu: 4G olmadığı için uzaktan anlık kaldırma kanalı yok, reklam kendi kendine düşmeli.
       Yayına girişi <strong>24–48 saat önceye</strong> verin ki tüm otobüsler indirebilsin.
@@ -93,7 +115,7 @@
       (<code>TIMEZONE</code>, varsayılan <code>Europe/Istanbul</code>) — ucuz stick'lerin çoğu UTC'dir ve
       aksi halde sabah kuşağı öğleden sonra dönerdi.
     </p>
-    <table><thead><tr><th>kampanya</th><th>reklamveren</th><th>başlangıç</th><th>bitiş</th><th title="saat aralığı">saat</th><th>ağırlık</th><th>gruplar</th><th>tip</th><th></th></tr></thead><tbody id="campaigns"></tbody></table>
+    <table><thead><tr><th>kampanya</th><th>reklamveren</th><th title="hesaplanmış durum">durum</th><th>başlangıç</th><th>bitiş</th><th title="saat aralığı">saat</th><th>ağırlık</th><th>gruplar</th><th>tip</th><th></th></tr></thead><tbody id="campaigns"></tbody></table>
   </section>
 
   <section>
@@ -103,7 +125,7 @@
       <input id="vCode" type="number" placeholder="versionCode" style="width:130px">
       <input id="vName" placeholder="versionName" style="width:130px">
       <input id="vRollout" type="number" value="1" style="width:90px" title="rollout grubu">
-      <button onclick="uploadApk()">Yayımla</button>
+      <button id="apkBtn" onclick="uploadApk()">Yayımla</button>
       <button class="sec" onclick="expandRollout()">Tüm cihazlara aç</button>
     </div>
     <div id="appInfo" class="dim"></div>
@@ -131,6 +153,7 @@
       "3 dakika yetiyor mu?" sorusunun ölçülmüş cevabı — pilotu büyütmeden önce buna bakın.
     </p>
   </section>
+  </div>
 </main>
 <script src="app.js"></script>
 </body>

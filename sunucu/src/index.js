@@ -7,6 +7,7 @@ import { load } from './store.js'
 import { deviceRouter, auth as deviceAuth } from './routes/device.js'
 import { adminRouter } from './routes/admin.js'
 import { redactUrl } from './guard.js'
+import { anahtarlariDogrula } from './crypto.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -15,6 +16,22 @@ load()
 
 if (!fs.existsSync(config.keys.privatePath)) {
   console.error('\nHATA: imzalama anahtari yok.\n  npm run anahtar-uret\nkomutunu calistirin.\n')
+  process.exit(1)
+}
+
+/*
+ * ANAHTAR CIFTI SELF-TEST'I ACILISTA.
+ *
+ * Servis durdurulmadan anahtar rotasyonu yapildiginda (dokumante edilmis
+ * `anahtar-uret --force` yolu) sunucu YENI acik anahtari dagitip ESKI ozel
+ * anahtarla imzaliyordu. Hicbir hata gorunmuyor, 200 donuyor - ama filodaki her
+ * cihaz her manifestte imza dogrulamasindan dusuyor ve hicbir icerik inmiyor.
+ * Cift acilista dogrulanmazsa bu ariza yalnizca aylar sonra fark edilir.
+ */
+try {
+  anahtarlariDogrula()
+} catch (e) {
+  console.error(`\nHATA: ${e.message}\n`)
   process.exit(1)
 }
 if (config.adminToken === 'degistir-beni') {

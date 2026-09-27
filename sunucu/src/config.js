@@ -11,8 +11,42 @@ const ROOT = path.resolve(__dirname, '..')
  */
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data')
 
+/**
+ * SAYISAL ORTAM DEGISKENLERI ACILISTA DOGRULANIR.
+ *
+ * Eski hali her yerde duz `Number(process.env.X || varsayilan)` idi ve NaN hicbir
+ * yerde yakalanmiyordu. Somut ariza: systemd unit dosyasina okunabilirlik adina
+ * `CHUNK_SIZE=4MB` yazilir. Sunucu sorunsuz acilir, panel calisir, cihaz eklenir -
+ * ilk yuklemede ffmpeg 10 dakika CPU yakar, cikti content/ altina tasinir, girdi
+ * dosyasi SILINIR ve hemen ardindan `Buffer.allocUnsafe(NaN)` ERR_OUT_OF_RANGE
+ * atar. Operatorun gordugu mesajin CHUNK_SIZE ile gorunur hicbir ilgisi yoktur ve
+ * her denemede content/ altinda bir yetim dosya daha birikir.
+ * Ayni kalip PORT icin `app.listen(NaN)` -> RASTGELE port, VIDEO_WIDTH icin
+ * `scale=NaN:NaN` -> her transcode basarisiz demekti.
+ *
+ * Artik bozuk deger, ne yazilmasi gerektigini soyleyen bir mesajla ACILISTA durdurur.
+ */
+function sayi (ad, ham, varsayilan, { min, max, tamsayi = true, ipucu = '' } = {}) {
+  if (ham === undefined || ham === null || String(ham).trim() === '') return varsayilan
+  const d = Number(ham)
+  const hata = (sebep) => {
+    throw new Error(
+      `${ad}="${ham}" gecerli bir deger degil (${sebep}).` +
+      (ipucu ? ` ${ipucu}` : '') +
+      ` Varsayilan: ${varsayilan}`
+    )
+  }
+  if (!Number.isFinite(d)) hata('sayi degil')
+  if (tamsayi && !Number.isInteger(d)) hata('tam sayi olmali')
+  if (min !== undefined && d < min) hata(`en az ${min} olmali`)
+  if (max !== undefined && d > max) hata(`en fazla ${max} olmali`)
+  return d
+}
+
+export { sayi }
+
 export const config = {
-  port: Number(process.env.PORT || 8080),
+  port: sayi('PORT', process.env.PORT, 8080, { min: 1, max: 65535 }),
   dataDir: DATA_DIR,
 
   // Yonetim paneli / API anahtari
@@ -23,9 +57,9 @@ export const config = {
     videoBitrate: process.env.VIDEO_BITRATE || '2500k',
     maxrate: process.env.VIDEO_MAXRATE || '3500k',
     bufsize: process.env.VIDEO_BUFSIZE || '5000k',
-    width: Number(process.env.VIDEO_WIDTH || 1920),
-    height: Number(process.env.VIDEO_HEIGHT || 1080),
-    fps: Number(process.env.VIDEO_FPS || 25),
+    width: sayi('VIDEO_WIDTH', process.env.VIDEO_WIDTH, 1920, { min: 160, max: 3840 }),
+    height: sayi('VIDEO_HEIGHT', process.env.VIDEO_HEIGHT, 1080, { min: 120, max: 2160 }),
+    fps: sayi('VIDEO_FPS', process.env.VIDEO_FPS, 25, { min: 1, max: 60 }),
     audioBitrate: process.env.AUDIO_BITRATE || '128k',
 
     /*
@@ -46,7 +80,7 @@ export const config = {
      */
     audio: (process.env.AUDIO || '0') === '1',
     /** Oynatici ses seviyesi (0..1). Ses kapaliyken anlamsiz oldugu icin 0'a kilitlenir. */
-    volume: Math.min(1, Math.max(0, Number(process.env.VOLUME || 1))),
+    volume: Math.min(1, Math.max(0, sayi('VOLUME', process.env.VOLUME, 1, { min: 0, max: 1, tamsayi: false }))),
     ffmpeg: process.env.FFMPEG_BIN || 'ffmpeg',
     ffprobe: process.env.FFPROBE_BIN || 'ffprobe',
     // Test ortaminda ffmpeg yoksa yuklenen dosya oldugu gibi kabul edilir.
@@ -54,7 +88,8 @@ export const config = {
   },
 
   // Parca boyutu. 4 MB: kopma aninda kaybedilen is kucuk, manifest sismiyor.
-  chunkSize: Number(process.env.CHUNK_SIZE || 4 * 1024 * 1024),
+  chunkSize: sayi('CHUNK_SIZE', process.env.CHUNK_SIZE, 4 * 1024 * 1024,
+    { min: 64 * 1024, max: 64 * 1024 * 1024, ipucu: 'Bayt cinsinden yazin: 4 MB = 4194304.' }),
 
   // Manifest imzalama anahtarlari (varsayilan olarak dataDir altinda)
   keys: {
@@ -63,7 +98,7 @@ export const config = {
   },
 
   // Uygulama guncellemesi icin kademeli yayim: cihazlar 1..N grubuna dagitilir.
-  rolloutGroups: Number(process.env.ROLLOUT_GROUPS || 4),
+  rolloutGroups: sayi('ROLLOUT_GROUPS', process.env.ROLLOUT_GROUPS, 4, { min: 1, max: 100 }),
 
   /*
    * ISLETMENIN SAAT DILIMI.
@@ -82,7 +117,7 @@ export const config = {
    * X-Forwarded-For'u istemciye birakir ve siniri tamamen atlatilabilir kilar;
    * bu yuzden burada bir SAYI istiyoruz. Dogrudan erisimde 0.
    */
-  trustProxyHops: Number(process.env.TRUST_PROXY_HOPS || 0),
+  trustProxyHops: sayi('TRUST_PROXY_HOPS', process.env.TRUST_PROXY_HOPS, 0, { min: 0, max: 10 }),
 
   /*
    * /content icin cihaz tokeni istenecek mi?
@@ -100,7 +135,7 @@ export const config = {
    * panel ise ayri bir yerde 72'yi SABIT tutuyordu. Yani "ayar" gorunen sey hicbir
    * seyi degistirmiyordu. Karar sunucuda verildigi icin ayar da burada.
    */
-  staleHours: Number(process.env.STALE_HOURS || 72)
+  staleHours: sayi('STALE_HOURS', process.env.STALE_HOURS, 72, { min: 1, max: 8760 })
 }
 
 export const paths = {

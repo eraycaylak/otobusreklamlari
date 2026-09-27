@@ -102,23 +102,57 @@ async function sirayaAl (is) {
   }
 }
 
+const PROBE_TIMEOUT_MS = Number(process.env.PROBE_TIMEOUT_MS || 60 * 1000)
+
+/**
+ * Video suresini ol.
+ *
+ * ZAMAN ASIMI VE CIKIS KODU KONTROLU SART - iki ayri sessiz ariza vardi:
+ *
+ *  1. Zaman asimi yoktu. run()'a bilincli olarak zaman asimi eklenmisti ("bozuk video
+ *     ffmpeg'i sonsuza kadar askida birakabilir") ama ffprobe AYNI bozuk dosya
+ *     uzerinde korumasiz calisiyordu. Tuhaf bir moov atomu ffprobe'u kilitleyince
+ *     POST /api/admin/upload istegi HIC yanit vermiyor, panelde spinner sonsuza kadar
+ *     donuyordu - yani run()'daki onlemin butun amaci bu adimda geri geliyordu.
+ *
+ *  2. `code` hic kontrol edilmiyordu. ffprobe kurulu degilse (ffmpeg var, ffprobe yok -
+ *     paketleme farkliliklarinda olur) veya 1 ile cikarsa parseFloat('') = NaN olup
+ *     sessizce 0 donuyordu. durationMs=0 manifeste gidiyor, cihaz fatura suresini
+ *     olculen zamana dusuruyor ve report.csv toplam_saniye kolonu hatali cikiyordu -
+ *     tek bir uyari bile olmadan.
+ *
+ * Artik: zaman asiminda ve sifirdan farkli cikis kodunda HATA firlatir; cagiran taraf
+ * bunu operatore gosterilecek bir isarete cevirir.
+ */
 async function probeDurationMs (file) {
-  try {
-    const out = await new Promise((resolve, reject) => {
-      const p = spawn(config.video.ffprobe, [
-        '-v', 'error', '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1', file
-      ])
-      let s = ''
-      p.stdout.on('data', (d) => { s += d.toString() })
-      p.on('error', reject)
-      p.on('close', () => resolve(s.trim()))
+  const out = await new Promise((resolve, reject) => {
+    const p = spawn(config.video.ffprobe, [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', file
+    ])
+    let s = ''
+    let err = ''
+    let zamanAsti = false
+    const zamanlayici = setTimeout(() => { zamanAsti = true; p.kill('SIGKILL') }, PROBE_TIMEOUT_MS)
+    p.stdout.on('data', (d) => { s += d.toString() })
+    p.stderr.on('data', (d) => { err += d.toString() })
+    p.on('error', (e) => { clearTimeout(zamanlayici); reject(e) })
+    p.on('close', (code) => {
+      clearTimeout(zamanlayici)
+      if (zamanAsti) {
+        reject(new Error(`ffprobe ${Math.round(PROBE_TIMEOUT_MS / 1000)} saniyede bitmedi, durduruldu (video bozuk olabilir)`))
+      } else if (code !== 0) {
+        reject(new Error(`ffprobe cikis kodu ${code}: ${err.slice(0, 500)}`))
+      } else {
+        resolve(s.trim())
+      }
     })
-    const sec = parseFloat(out)
-    return Number.isFinite(sec) ? Math.round(sec * 1000) : 0
-  } catch {
-    return 0
+  })
+  const sec = parseFloat(out)
+  if (!Number.isFinite(sec) || sec <= 0) {
+    throw new Error(`ffprobe sure dondurmedi (cikti: "${out.slice(0, 120)}")`)
   }
+  return Math.round(sec * 1000)
 }
 
 /**
@@ -144,15 +178,44 @@ export async function ingest (incomingPath, originalName) {
     throw e
   }
 
+  /*
+   * TUM HESAP GECICI DOSYA UZERINDE YAPILIR, TASIMA EN SONDA.
+   *
+   * Eski sira: rename -> buildChunks -> ffprobe -> save. Aradaki bir hata (bozuk
+   * CHUNK_SIZE, kilitlenen ffprobe, dolu disk) content/ altinda KAYDI OLMAYAN bir
+   * dosya birakiyordu: /temizlik onu goremiyor (s.items'ta yok), kimse silmiyor ve her
+   * yeniden denemede bir kopya daha birikiyordu. Once hesapla, sonra tasi: hata
+   * durumunda content/ hic dokunulmamis kalir.
+   */
   const sha = await sha256File(produced)
   const finalName = `${sha}.mp4`
   const finalPath = path.join(paths.content, finalName)
+
+  let size, chunks, durationMs
+  let sureBilinmiyor = false
+  try {
+    ;({ size, chunks } = await buildChunks(produced))
+    try {
+      durationMs = await probeDurationMs(produced)
+    } catch (e) {
+      /*
+       * Sure olculemedi: yuklemeyi REDDETMIYORUZ (dosya isleniyor, oynatilabilir) ama
+       * SESSIZ de gecmiyoruz. durationMs=0 ile devam etmek fatura suresini olculen
+       * zamana dusurur; operator bunu bilmek zorunda - item'a isaret koyup panelde
+       * kirmizi gosteriyoruz.
+       */
+      console.warn(`[transcode] sure olculemedi (${originalName}): ${e.message}`)
+      durationMs = 0
+      sureBilinmiyor = true
+    }
+  } catch (e) {
+    fs.rmSync(produced, { force: true })
+    throw e
+  }
+
   if (!fs.existsSync(finalPath)) fs.renameSync(produced, finalPath)
   else fs.rmSync(produced, { force: true })
   fs.rmSync(incomingPath, { force: true })
-
-  const { size, chunks } = await buildChunks(finalPath)
-  const durationMs = await probeDurationMs(finalPath)
 
   const s = db()
   s.items[sha] = {
@@ -160,6 +223,7 @@ export async function ingest (incomingPath, originalName) {
     file: `content/${finalName}`,
     size,
     durationMs,
+    ...(sureBilinmiyor ? { durationBilinmiyor: true } : {}),
     chunks,
     originalName,
     createdAt: new Date().toISOString()

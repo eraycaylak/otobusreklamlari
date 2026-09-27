@@ -43,8 +43,25 @@ export function buildManifest (device) {
      * olmayan gruplari acikca uyari olarak bildiriyor ve panelde gorunuyor.
      */
     if (Array.isArray(c.groups) && c.groups.length && !c.groups.includes(group)) continue
+    /*
+     * IKINCI SAVUNMA HATTI: hasOwn + ALAN BUTUNLUGU.
+     *
+     * `s.items['__proto__']` kalitim yoluyla dogru bir deger doner, yani duz
+     * `if (!item) continue` gecerdi ve manifeste file/size/sha256/chunks alanlari
+     * UNDEFINED olan bir oge girerdi. JSON.stringify o alanlari tamamen atar;
+     * cihazdaki ManifestParser onlari ZORUNLU okudugu icin parse TAMAMEN basarisiz
+     * olur - yani tek bir bozuk kampanya TUM filoyu senkrondan dusurur. Uc tarafinda
+     * da dogrulama var; burada tekrar bakmak "iki taraf birbirine guvenmesin"
+     * kuralinin geregi: yanlis kayit elle db.json'a da girebilir.
+     */
+    if (!Object.hasOwn(s.items, c.itemSha)) continue
     const item = s.items[c.itemSha]
-    if (!item) continue
+    if (!item || typeof item !== 'object') continue
+    if (typeof item.file !== 'string' || typeof item.sha256 !== 'string' ||
+        !Number.isFinite(Number(item.size)) || !Array.isArray(item.chunks)) {
+      console.warn(`[manifest] kampanya ${c.id} atlandi: icerik kaydi eksik (itemSha=${c.itemSha})`)
+      continue
+    }
     items.push({
       id: c.id,
       file: item.file,

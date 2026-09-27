@@ -59,17 +59,53 @@ test('validId normal kimlikleri kabul eder', () => {
 })
 
 test('csvSafe formul enjeksiyonunu notrlestirir', () => {
-  // Excel'de "=" ile baslayan hucre FORMUL olarak calisir.
-  assert.equal(guard.csvSafe('=cmd|calc'), "'=cmd|calc")
-  assert.equal(guard.csvSafe('+1+1'), "'+1+1")
-  assert.equal(guard.csvSafe('-2'), "'-2")
-  assert.equal(guard.csvSafe('@SUM(A1)'), "'@SUM(A1)")
-  assert.equal(guard.csvSafe('Kahve A.S.'), 'Kahve A.S.')
+  // Excel'de "=" ile baslayan hucre FORMUL olarak calisir. On ek, alintinin ICINDE.
+  assert.equal(guard.csvSafe('=cmd|calc'), '"\'=cmd|calc"')
+  assert.equal(guard.csvSafe('+1+1'), '"\'+1+1"')
+  assert.equal(guard.csvSafe('-2'), '"\'-2"')
+  assert.equal(guard.csvSafe('@SUM(A1)'), '"\'@SUM(A1)"')
+  assert.equal(guard.csvSafe('Kahve A.S.'), '"Kahve A.S."')
 })
 
-test('csvSafe ayirici ve satir sonunu temizler', () => {
-  assert.equal(guard.csvSafe('a;b\nc\rd'), 'a b c d')
+test('csvSafe ayiriciyi ve satir sonunu ALINTI ICINDE korur', () => {
+  // Tam alintilama ile ; ve CR/LF veri KAYBI olmadan tasinir (RFC 4180).
+  assert.equal(guard.csvSafe('a;b\nc\rd'), '"a;b\nc\rd"')
 })
+
+test('csvSafe CIFT TIRNAGI ikiler - sutun kaymasini onler', () => {
+  /*
+   * REGRESYON TESTI. Eski csvSafe cift tirnagi hic ele almiyordu: reklamveren adi
+   * `"Acme" Reklam A.S.` oldugunda Excel bastaki tirnagi ALAN ALINTISI sayip sonraki
+   * sutunlari kaydiriyordu - faturaya dayanak olan satirda otobus/gun/oynatma sayisi
+   * sutunlari yer degistiriyordu. Sessiz ve dogrudan parayla ilgili bir hata.
+   */
+  assert.equal(guard.csvSafe('"Acme" Reklam A.S.'), '"""Acme"" Reklam A.S."')
+
+  // Satirin gercekten dogru ayristigini da dogrula: 3 alan, sinirlar korunmus.
+  const satir = [
+    guard.csvSafe('kahve-30'),
+    guard.csvSafe('"Acme" Reklam'),
+    guard.csvSafe('OTOBUS-014')
+  ].join(';')
+  assert.deepEqual(csvAyristir(satir), ['kahve-30', '"Acme" Reklam', 'OTOBUS-014'])
+})
+
+/** Kucuk RFC 4180 ayristirici - testin kendi iddiasini dogrulayabilmesi icin. */
+function csvAyristir (satir) {
+  const out = []
+  let alan = ''
+  let alintida = false
+  for (let i = 0; i < satir.length; i++) {
+    const ch = satir[i]
+    if (alintida) {
+      if (ch === '"' && satir[i + 1] === '"') { alan += '"'; i += 1 } else if (ch === '"') alintida = false
+      else alan += ch
+    } else if (ch === '"') alintida = true
+    else if (ch === ';') { out.push(alan); alan = '' } else alan += ch
+  }
+  out.push(alan)
+  return out
+}
 
 test('redactUrl tokeni gizler', () => {
   assert.equal(
@@ -171,23 +207,79 @@ test('async handler hatasi sureci dusurmez, 500 doner', async () => {
   srv.close()
 })
 
-test('admin.js icindeki TUM async route handler lari sarmalanmis', async () => {
-  // Yeni bir async uc eklenip tut() unutulursa bu test kirilir.
-  const fs = await import('node:fs')
-  const kaynak = fs.readFileSync(new URL('../src/routes/admin.js', import.meta.url), 'utf8')
+/**
+ * TUT() DENETIMI - HER IKI ROUTER ICIN, PENCERE DEGIL ROUTE DILIMLEMESIYLE.
+ *
+ * Eski hali `kaynak.slice(m.index, m.index + 400)` ile 400 KARAKTERLIK SABIT bir
+ * pencereye bakiyordu. Iki yonlu yanlis sonuc veriyordu:
+ *  - KOMSUYA TASMA: kisa bir senkron ucun penceresi bir SONRAKI ucun `tut(async`
+ *    yazisini goruyor ve testi geciyordu.
+ *  - EKSIK GORME: uzun yorumlu bir ucta `async (` pencerenin disinda kaliyordu.
+ * Yani "tut() unutuldu" hatasini yakalamasi gereken test, unutmanin en olasi
+ * halinde SESSIZCE geciyordu.
+ *
+ * Dogrusu: her ucun dilimi bir SONRAKI uc tanimina kadar. Boylece pencere asla
+ * komsuya tasmaz ve uzunluk sinirsizdir.
+ */
+function uclariBul (kaynak, routerAdi) {
+  const oncu = `${routerAdi}.`
+  const out = []
+  let i = 0
+  while ((i = kaynak.indexOf(oncu, i)) !== -1) {
+    const m = /^(get|post|put|delete)\(\s*'([^']+)'/.exec(kaynak.slice(i + oncu.length))
+    if (m) out.push({ metod: m[1], yol: m[2], index: i })
+    i += oncu.length
+  }
+  return out
+}
 
-  const sarmalanmamis = []
-  const desen = /adminRouter\.(get|post|put|delete)\(\s*'([^']+)'\s*,\s*([^)]*)/g
-  let m
-  while ((m = desen.exec(kaynak)) !== null) {
-    const [, metod, yol, devami] = m
-    // async handler mi? (ara middleware olabilir, bu yuzden satirin devamina bakiyoruz)
-    const parca = kaynak.slice(m.index, m.index + 400)
-    if (/async\s*\(/.test(parca) && !/tut\(\s*async/.test(parca)) {
-      sarmalanmamis.push(`${metod.toUpperCase()} ${yol}`)
+function sarmalanmamisUclar (kaynak, routerAdi) {
+  const bulunanlar = uclariBul(kaynak, routerAdi)
+  const eksik = []
+  for (let i = 0; i < bulunanlar.length; i++) {
+    const bas = bulunanlar[i].index
+    const son = i + 1 < bulunanlar.length ? bulunanlar[i + 1].index : kaynak.length
+    const dilim = kaynak.slice(bas, son)
+    if (/async\s*\(/.test(dilim) && !/tut\(\s*async/.test(dilim)) {
+      eksik.push(`${bulunanlar[i].metod.toUpperCase()} ${bulunanlar[i].yol}`)
     }
   }
-  assert.deepEqual(sarmalanmamis, [], `sarmalanmamis async uc(ler): ${sarmalanmamis.join(', ')}`)
+  return { eksik, sayi: bulunanlar.length }
+}
+
+test('tut() denetleyicisinin KENDISI calisiyor (negatif kontrol)', () => {
+  /*
+   * Bu test olmadan denetim testi hicbir sey bulmadigi icin HER ZAMAN geciyordu -
+   * bozuldugunda da gecmeye devam ederdi. Bilerek sarmalanmamis bir ornek veriyoruz:
+   * tarayici onu BULMAK zorunda.
+   */
+  const kotu = `
+    adminRouter.get('/iyi', tut(async (req, res) => { await f(); res.json({}) }))
+    adminRouter.post('/kotu', async (req, res) => { await f(); res.json({}) })
+    adminRouter.get('/senkron', (req, res) => res.json({}))
+  `
+  const { eksik, sayi } = sarmalanmamisUclar(kotu, 'adminRouter')
+  assert.equal(sayi, 3, 'uc tanimlarinin hepsi bulunmali')
+  assert.deepEqual(eksik, ['POST /kotu'], 'sarmalanmamis uc tam olarak bu olmali')
+
+  // Komsuya tasma da olmamali: kisa senkron uctan SONRA sarmalanmis bir uc gelirse
+  // eski 400 karakterlik pencere onu "sarmalanmis" sayiyordu.
+  const tasma = `
+    adminRouter.get('/kisa', async (req, res) => { res.json({}) })
+    adminRouter.get('/komsu', tut(async (req, res) => { res.json({}) }))
+  `
+  assert.deepEqual(sarmalanmamisUclar(tasma, 'adminRouter').eksik, ['GET /kisa'],
+    'kisa ucun denetimi komsunun tut() yazisini gormemeli')
+})
+
+test('admin.js ve device.js icindeki TUM async route handler lari sarmalanmis', async () => {
+  const fs = await import('node:fs')
+  for (const [dosya, router] of [['admin.js', 'adminRouter'], ['device.js', 'deviceRouter']]) {
+    const kaynak = fs.readFileSync(new URL(`../src/routes/${dosya}`, import.meta.url), 'utf8')
+    const { eksik, sayi } = sarmalanmamisUclar(kaynak, router)
+    assert.ok(sayi > 0, `${dosya} icinde uc bulunamadi - tarayici bozulmus olabilir`)
+    assert.deepEqual(eksik, [], `${dosya}: sarmalanmamis async uc(ler): ${eksik.join(', ')}`)
+  }
 })
 
 /**
@@ -323,25 +415,46 @@ test('nokta onbellegi manifesti GERCEKTEN onbellekleyebiliyor', async () => {
  * testle bagliyoruz.
  */
 test('belgelerdeki test sayisi gercek sayiyla ayni', () => {
-  const dosyalar = ['e2e.test.js', 'guvenlik.test.js', 'transcode.test.js']
+  /*
+   * DOSYA LISTESI ARTIK ELLE YAZILMIYOR.
+   *
+   * Sabit liste, yeni bir test dosyasi eklendiginde (fatura-guncelleme.test.js)
+   * onu SAYMIYOR: belge guncel gorunuyor ama gercek sayi farkli oluyordu - yani
+   * belgeyi kilitlemesi gereken test kendi isini yapmaz hale geliyordu.
+   */
+  const dizin = new URL('./', import.meta.url)
+  const dosyalar = fs.readdirSync(dizin).filter((f) => f.endsWith('.test.js')).sort()
+  assert.ok(dosyalar.length >= 3, `test dosyalari bulunamadi: ${dosyalar.join(', ')}`)
+
   let gercek = 0
   for (const d of dosyalar) {
     const kaynak = fs.readFileSync(new URL(`./${d}`, import.meta.url), 'utf8')
     gercek += (kaynak.match(/^test\(/gm) || []).length
   }
 
+  /*
+   * IDDIALAR BAGLAMA GORE SECILIR, SIHIRLI SAYIYLA DEGIL.
+   *
+   * Eski hali Kotlin test sayisini `n !== 65` ile diskaliye ediyordu: Kotlin tarafina
+   * tek test eklendigi anda bu suzgec bozulup yanlis dosyayi karsilastirmaya
+   * baslardi. Artik yalnizca SUNUCU testlerinden bahseden satirlara bakiyoruz.
+   */
   for (const yol of ['../../README.md', '../../docs/kurulum-calistirma.md']) {
     const metin = fs.readFileSync(new URL(yol, import.meta.url), 'utf8')
-    const iddialar = [...metin.matchAll(/(\d+)\s*test/g)].map((m) => Number(m[1]))
-    // Sunucu test sayisini anan her yer dogru olmali. (65 = Kotlin testleri, ayri.)
-    const sunucuIddialari = iddialar.filter((n) => n > 20 && n !== 65)
-    for (const n of sunucuIddialari) {
-      assert.equal(
-        n, gercek,
-        `${yol} icinde "${n} test" yaziyor ama gercek sayi ${gercek}. ` +
-        'Test eklediyseniz belgeyi de guncelleyin.'
-      )
+    let bakilan = 0
+    for (const satir of metin.split('\n')) {
+      const sunucuSatiri = /npm test|Sunucu —|sunucu\/test\/|Testleri çalıştırın/.test(satir)
+      if (!sunucuSatiri) continue
+      for (const m of satir.matchAll(/(\d+)\s*test/g)) {
+        bakilan += 1
+        assert.equal(
+          Number(m[1]), gercek,
+          `${yol} icinde "${m[1]} test" yaziyor ama gercek sayi ${gercek}. ` +
+          'Test eklediyseniz belgeyi de guncelleyin.'
+        )
+      }
     }
+    assert.ok(bakilan > 0, `${yol} icinde sunucu test sayisi iddiasi bulunamadi - belge mi degisti?`)
   }
 })
 

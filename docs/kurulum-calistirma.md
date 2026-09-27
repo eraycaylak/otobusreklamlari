@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (44 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
+Testleri çalıştırın (70 test — Range ile devam eden indirme senaryosu, fatura kuralları ve güvenlik testleri dahil):
 
 ```bash
 npm test

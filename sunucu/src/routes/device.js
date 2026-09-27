@@ -75,14 +75,39 @@ deviceRouter.post('/logs', auth,
       try { body = zlib.gunzipSync(body) } catch { return res.status(400).json({ error: 'gzip cozulemedi' }) }
     }
 
+    /*
+     * SATIR SUZGECI - TEK BOZUK SATIR TUM PARTIYI VE ACK'I BLOKLAMAMALI.
+     *
+     * Onceden yalnizca `seq` dogrulaniyordu. `startedAt` hic dogrulanmadigi icin
+     * store.appendPlayLogs onu dogrudan DOSYA YOLUNA koyuyordu:
+     *   - startedAt bir SAYI ise (Entities.kt'de zaten `Long`; ISO'ya cevirme tek
+     *     satirda yapiliyor ve kolayca kaybolur) `.slice is not a function` ->
+     *     istek 500 -> cihaz ACK ALMADIGI icin satirlari SILMEZ -> her pencerede ayni
+     *     partiyi yeniden yukler, yine 500 alir. O otobusun fatura verisi sunucuya
+     *     HIC ulasmaz ve cihazin diski dolar.
+     *   - startedAt "../../../tmp/x" ise NDJSON logs dizininin DISINA yazilirdi.
+     *
+     * Dosya adi artik sunucu saatinden turetiliyor (store.js), ama satir icindeki
+     * deger de temiz olmali: rapor gun gruplamasinda kullaniliyor.
+     */
+    const ISO_BASI = /^\d{4}-\d{2}-\d{2}T/
     const rows = []
+    let atilan = 0
     for (const line of body.toString('utf8').split('\n')) {
       if (!line.trim()) continue
       let row
-      try { row = JSON.parse(line) } catch { continue }
-      if (!Number.isFinite(Number(row.seq))) continue
+      try { row = JSON.parse(line) } catch { atilan += 1; continue }
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) { atilan += 1; continue }
+      if (!Number.isFinite(Number(row.seq))) { atilan += 1; continue }
+      // startedAt normalize edilir: bicimi bozuksa satir ATILMAZ (fatura verisi
+      // kaybolmaz), sadece alan temizlenir - rapor o satiri sunucu gunune yazar.
+      if (typeof row.startedAt !== 'string' || !ISO_BASI.test(row.startedAt)) {
+        const t = Date.parse(row.startedAt)
+        row.startedAt = Number.isFinite(t) ? new Date(t).toISOString() : null
+      }
       rows.push(row)
     }
+    if (atilan) console.warn(`${req.device.id}: ${atilan} bozuk log satiri atlandi`)
 
     const s = db()
 
@@ -155,10 +180,56 @@ deviceRouter.post('/logs', auth,
   }
 )
 
-/** Cihaz sagligi: surum, disk, sinyal, sicaklik, son hata, tamamlanma orani. */
+/*
+ * Cihaz sagligi: surum, disk, sinyal, sicaklik, son hata, tamamlanma orani.
+ *
+ * GOVDE BEYAZ LISTEDEN GECER - SERBEST JSON KALICIYA YAZILMAZ.
+ *
+ * Eski hali `{ ...req.body }` ile 256 KB'a kadar serbest JSON'u oldugu gibi kaydediyordu
+ * ve writeHeartbeat her kaydi IKI yere yaziyor (son durum .json + gecmis .ndjson).
+ * Bozulmus ya da kurcalanmis tek bir stick `lastError` alanina her heartbeat'te ~250 KB
+ * yazarak gunde onlarca MB birikim uretebiliyordu; gecmis dosyalari 180 gun silinmiyor
+ * ve /pencere-raporu.csv onlarin TAMAMINI RAM'e okuyor. Disk dolunca save() ve
+ * appendPlayLogs yazamaz -> /logs 500 doner -> cihazlar ACK almadigi icin loglari
+ * silmez ama sunucuda FATURA verisi hic olusmaz.
+ */
+const METIN_SINIRI = 500
+function heartbeatAlanlari (b) {
+  const ham = (b && typeof b === 'object' && !Array.isArray(b)) ? b : {}
+  const sayi = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null }
+  const metin = (v, n = METIN_SINIRI) => (v === undefined || v === null) ? null : String(v).slice(0, n)
+  const bool = (v) => (v === undefined || v === null) ? null : !!v
+  return {
+    appVersion: sayi(ham.appVersion),
+    appVersionName: metin(ham.appVersionName, 64),
+    playlistVersion: sayi(ham.playlistVersion),
+    readyItems: sayi(ham.readyItems),
+    totalItems: sayi(ham.totalItems),
+    playableItems: sayi(ham.playableItems),
+    badItems: sayi(ham.badItems),
+    pendingLogs: sayi(ham.pendingLogs),
+    freeBytes: sayi(ham.freeBytes),
+    sessionBytes: sayi(ham.sessionBytes),
+    rssi: sayi(ham.rssi),
+    temperature: sayi(ham.temperature),
+    uptimeMs: sayi(ham.uptimeMs),
+    reboots: sayi(ham.reboots),
+    rebootsSince24h: sayi(ham.rebootsSince24h),
+    clockTrusted: bool(ham.clockTrusted),
+    clockNote: metin(ham.clockNote, 200),
+    safeMode: bool(ham.safeMode),
+    deviceOwner: bool(ham.deviceOwner),
+    policyErrors: metin(ham.policyErrors, 300),
+    model: metin(ham.model, 80),
+    timezone: metin(ham.timezone, 64),
+    lastError: metin(ham.lastError),
+    lastInstallError: metin(ham.lastInstallError)
+  }
+}
+
 deviceRouter.post('/heartbeat', auth, express.json({ limit: '256kb' }), (req, res) => {
   writeHeartbeat(req.device.id, {
-    ...req.body,
+    ...heartbeatAlanlari(req.body),
     group: req.device.group,
     label: req.device.label,
     ip: req.ip

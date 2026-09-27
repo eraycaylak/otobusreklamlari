@@ -118,7 +118,20 @@ adminRouter.get('/state', (req, res) => {
        */
       clockNote: hb?.clockNote ?? null,
       lastInstallError: hb?.lastInstallError ?? null,
-      timezone: hb?.timezone ?? null
+      timezone: hb?.timezone ?? null,
+      /*
+       * CIHAZ SAHIBI (DEVICE OWNER) DURUMU - PANELDE GORUNMESI SART.
+       *
+       * Proje kendi dokumantasyonunda "device owner olmadan bu is yurumez" diyor:
+       * sessiz kurulum, kiosk, WiFi profili, planli reboot hepsi ona bagli. Buna
+       * ragmen bu bilgi HICBIR uzaktan kanalda yoktu - yalnizca cihazin yanina gidip
+       * teshis ekranini acarak gorulebiliyordu. Bir ROM degisikligi DPM politikalarini
+       * dusurdugunde 50 cihaz kiosk'suz calisiyor ve heartbeat YESIL gonderiyordu;
+       * problem ancak bir yolcu kumandayla uygulamadan cikinca ortaya cikiyordu.
+       */
+      deviceOwner: hb?.deviceOwner ?? null,
+      // Uygulanamayan DPM politikalarinin listesi (bos = hepsi uygulandi).
+      policyErrors: hb?.policyErrors ?? null
     }
   })
 
@@ -182,7 +195,20 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
   if (!b.itemSha) return res.status(400).json({ error: 'itemSha zorunlu' })
 
   const s = db()
-  if (!s.items[b.itemSha]) return res.status(400).json({ error: 'icerik bulunamadi' })
+  /*
+   * itemSha DA validId'den GECER - tek basina varlik kontrolu YETMIYOR.
+   *
+   * `s.items['__proto__']` kalitim yoluyla Object.prototype'a cozulur ve DOGRUDUR,
+   * yani eski `if (!s.items[b.itemSha])` kontrolu geciyordu. Kampanya
+   * itemSha:'__proto__' ile kaydediliyor, manifest.js ayni sebeple onu gecerli
+   * sayiyor ve file/size/sha256/chunks alanlari UNDEFINED olan bir oge uretiyordu -
+   * JSON.stringify o alanlari tamamen atiyor. Cihazdaki ManifestParser bu alanlari
+   * ZORUNLU okudugu icin parse TAMAMEN basarisiz oluyor: TUM filo senkrondan
+   * dusuyor, sunucu 200 donmeye devam ediyor ve sebep hicbir yerde gorunmuyor.
+   */
+  if (!validId(b.itemSha) || !Object.hasOwn(s.items, b.itemSha)) {
+    return res.status(400).json({ error: 'icerik bulunamadi' })
+  }
 
   const id = b.id || `k-${Date.now().toString(36)}`
   // Bu deger hem nesne anahtari hem rapor sutunu oluyor; serbest birakilmamali.
@@ -232,13 +258,53 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
     })
   }
 
+  /*
+   * TARIHLER AYRISTIRILABILIR OLMAK ZORUNDA - VE NORMALIZE EDILIR.
+   *
+   * Eski hali yalnizca validUntil'in VAR OLDUGUNA bakiyordu, TARIH OLDUGUNA
+   * bakmiyordu. Cihaz tarafi katı ISO-8601 instant bekler (`Instant.parse`);
+   * ayristiramazsa validUntil null olur ve evergreen olmayan oge KALICI OLARAK
+   * hicbir zaman uygun olmaz. Panel ise `new Date(...)` kullandigi icin ayni degeri
+   * sorunsuz gosterir - yani "31.12.2026" yazan bir kampanya panelde dogru gorunur,
+   * 50 otobus dosyayi indirir (bant genisligi harcanir) ve ucretli reklam HIC
+   * yayinlanmaz. Ilk isaret ay sonunda raporun bos olmasidir.
+   *
+   * Cozum: burada Date.parse ile dogrula ve toISOString() ile normalize et. Boylece
+   * cihaza giden deger her zaman Instant.parse'in kabul ettigi bicimde olur.
+   */
+  const tarih = (ad, v) => {
+    if (v === null || v === undefined || String(v).trim() === '') return null
+    const t = Date.parse(v)
+    if (!Number.isFinite(t)) {
+      const e = new Error(`${ad} bir tarih olarak okunamadi: "${v}". ISO-8601 kullanin, orn. 2026-12-31T23:59:00Z`)
+      e.alan = ad
+      throw e
+    }
+    return new Date(t).toISOString()
+  }
+  let validFrom, validUntil
+  try {
+    validFrom = evergreen ? null : tarih('validFrom', b.validFrom)
+    validUntil = evergreen ? null : tarih('validUntil', b.validUntil)
+  } catch (e) {
+    return res.status(400).json({ error: 'gecersiz tarih', detail: e.message })
+  }
+  // Ters aralik: hicbir zaman yayinlanamayacak bir kampanya. Kabul etmek, operatore
+  // "kaydedildi" deyip reklami hic oynatmamak olurdu.
+  if (validFrom && validUntil && Date.parse(validFrom) >= Date.parse(validUntil)) {
+    return res.status(400).json({
+      error: 'ters tarih araligi',
+      detail: `bitis (${validUntil}) baslangictan (${validFrom}) sonra olmali - bu kampanya hic yayinlanamazdi`
+    })
+  }
+
   s.campaigns[id] = {
     id,
     itemSha: b.itemSha,
     title: b.title || id,
     advertiser: b.advertiser || '',
-    validFrom: evergreen ? null : (b.validFrom || null),
-    validUntil: evergreen ? null : b.validUntil,
+    validFrom,
+    validUntil,
     dayparts,
     weight: Math.max(1, Number(b.weight) || 1),
     groups: Array.isArray(b.groups) ? b.groups : [],
@@ -251,9 +317,20 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
   res.json({ ok: true, campaign: s.campaigns[id], playlistVersion: v })
 })
 
+/*
+ * DELETE UCLARI: KALITILAN ANAHTARLAR "VAR" SAYILMAZ.
+ *
+ * `s.campaigns['__proto__']` kalitim yoluyla dogru bir deger doner, yani eski
+ * `if (!s.campaigns[id])` kontrolu geciyordu; `delete` ise kendi ozelligi olmadigi
+ * icin HICBIR SEY silmeyip true donuyordu. Sonuc: operator `{ok:true}` goruyor,
+ * kampanyanin silindigine inaniyor - kampanya bir sonraki manifestte oynamaya devam
+ * ediyor. Ustelik playlistVersion bosa artiyor ve 50 otobusun tamami panelde
+ * "playlistVersion geride" olarak isaretleniyor.
+ */
 adminRouter.delete('/campaign/:id', (req, res) => {
   const s = db()
-  if (!s.campaigns[req.params.id]) return res.status(404).json({ error: 'yok' })
+  if (!validId(req.params.id)) return res.status(400).json({ error: 'gecersiz id' })
+  if (!Object.hasOwn(s.campaigns, req.params.id)) return res.status(404).json({ error: 'yok' })
   delete s.campaigns[req.params.id]
   save()
   res.json({ ok: true, playlistVersion: bumpPlaylistVersion() })
@@ -314,7 +391,8 @@ adminRouter.post('/device', express.json(), (req, res) => {
 
 adminRouter.delete('/device/:id', (req, res) => {
   const s = db()
-  if (!s.devices[req.params.id]) return res.status(404).json({ error: 'yok' })
+  if (!validId(req.params.id)) return res.status(400).json({ error: 'gecersiz id' })
+  if (!Object.hasOwn(s.devices, req.params.id)) return res.status(404).json({ error: 'yok' })
   delete s.devices[req.params.id]
   save()
   res.json({ ok: true })
@@ -335,12 +413,65 @@ adminRouter.post('/app', tut(async (req, res) => {
       return res.status(400).json({ error: 'versionCode 1..2000000000 arasi tam sayi olmali' })
     }
 
+    /*
+     * rolloutGroup DOGRULANIR - dogrulanmadiginda kademeli yayimi SESSIZCE KAPATIR.
+     *
+     * `Number('hepsi')` = NaN; NaN db.json'a `null` olarak yazilir, manifest.js'teki
+     * `?? 0` NaN'i yakalamaz, cihazda `optInt(...,0)` 0 olur ve kural `grup <=
+     * rolloutGroup` oldugu icin 0 HICBIR cihazi kapsamaz. Yani kritik bir duzeltme
+     * "yayimlandi" gorunur, playlistVersion artar ve 50 otobusun HICBIRI guncellemeyi
+     * indirmez. 4G ve uzaktan komut kanali olmadigi icin tek geri bildirim, gunler
+     * sonra panelde appVersion sutununun hala eski surumu gostermesidir.
+     */
+    const rg = grupSayisiDogrula(req.query.rolloutGroup, 1)
+    if (rg === null) {
+      return res.status(400).json({ error: `rolloutGroup 1..${config.rolloutGroups} arasi tam sayi olmali` })
+    }
+
     const name = `reklam-${versionCode}.apk`
     const file = path.join(paths.app, name)
-    try { await streamToFile(req, file) } catch (e) { return res.status(400).json({ error: String(e.message || e) }) }
 
-    const sha = await sha256File(file)
-    const { size, chunks } = await buildChunks(file)
+    /*
+     * AYNI versionCode'u SESSIZCE EZME.
+     *
+     * Yeniden yukleme sirasinda dosya yerinde degistiriliyorsa, o pencerede gelen
+     * otobus eski manifestteki chunk hash'leriyle dogrulamayi surekli basarisiz kilar
+     * ve 3 dakikasini bosa harcar. Bilincli bir ?force=1 istiyoruz.
+     */
+    if (fs.existsSync(file) && req.query.force !== '1') {
+      return res.status(409).json({
+        error: `versionCode ${versionCode} zaten yayimli`,
+        detail: 'Yeni bir versionCode kullanin ya da bilincli olarak ?force=1 ekleyin.'
+      })
+    }
+
+    /*
+     * APK ATOMIK YAYIMLANIR - DOGRUDAN YAYINDAKI DOSYANIN USTUNE AKITILMAZ.
+     *
+     * Eski hali govdeyi dogrudan `app/reklam-<v>.apk` uzerine akitiyordu ve
+     * streamToFile hata yolunda HEDEFI SILIYORDU. Ama `s.app` yalnizca basarida
+     * guncellendiginden, basarisiz bir yuklemeden sonra manifest halen o dosyayi
+     * (eski sha256 + eski chunk listesiyle) reklam ediyordu - dosya ise diskte YOKTU.
+     * Somut sonuc: govdesiz/kesik tek bir istek, tum filonun APK'sini 404'e cevirip
+     * uygulama guncellemesini (critical bayragi dahil) KALICI olarak imkansiz
+     * kiliyordu; panel "surum yayimlandi" gostermeye devam ediyordu.
+     *
+     * Video tarafi (ingest) zaten gecici dosya + rename kullaniyor; ayni deseni
+     * buraya da getiriyoruz.
+     */
+    const gecici = path.join(paths.incoming, `apk-${Date.now()}-${randomToken(6)}.apk`)
+    let sha, size, chunks
+    try {
+      await streamToFile(req, gecici)
+      sha = await sha256File(gecici)
+      ;({ size, chunks } = await buildChunks(gecici))
+    } catch (e) {
+      fs.rmSync(gecici, { force: true })
+      return res.status(400).json({ error: String(e.message || e) })
+    }
+
+    // Ancak her sey hesaplandiktan SONRA yayina al.
+    fs.renameSync(gecici, file)
 
     const s = db()
     s.app = {
@@ -350,7 +481,7 @@ adminRouter.post('/app', tut(async (req, res) => {
       size,
       sha256: sha,
       chunks,
-      rolloutGroup: Number(req.query.rolloutGroup || 1),
+      rolloutGroup: rg,
       critical: req.query.critical === '1',
       uploadedAt: new Date().toISOString()
     }
@@ -364,7 +495,12 @@ adminRouter.post('/app', tut(async (req, res) => {
 adminRouter.post('/app/rollout', express.json(), (req, res) => {
   const s = db()
   if (!s.app) return res.status(400).json({ error: 'yayimlanmis apk yok' })
-  s.app.rolloutGroup = Number(req.body?.rolloutGroup ?? config.rolloutGroups)
+  // Dogrulanmamis bir deger (NaN / 0 / -1) guncellemeyi tum filoya sessizce kapatirdi.
+  const rg = grupSayisiDogrula(req.body?.rolloutGroup, config.rolloutGroups)
+  if (rg === null) {
+    return res.status(400).json({ error: `rolloutGroup 1..${config.rolloutGroups} arasi tam sayi olmali` })
+  }
+  s.app.rolloutGroup = rg
   save()
   res.json({ ok: true, app: { ...s.app, chunks: undefined } })
 })
@@ -381,6 +517,32 @@ adminRouter.post('/app/rollout', express.json(), (req, res) => {
 adminRouter.post('/temizlik', express.json(), (req, res) => {
   const s = db()
   const kullanilan = new Set(Object.values(s.campaigns).map((c) => c.itemSha))
+
+  /*
+   * SAKLAMA SURELERI DOGRULANIR - DOGRULANMADIGINDA HER SEYI SILER.
+   *
+   * Eski hali `Number(req.body?.kanitGun ?? 90)` idi. `"90 gun"` -> NaN ve filtre
+   * `if (st.mtimeMs >= kanitSiniri) continue` NaN karsilastirmasinda HER ZAMAN false
+   * verir: hicbir dosya atlanmaz, dizinin TAMAMI silinir. `0` ise ayni sonucu
+   * deterministik olarak uretir. Kaybedilenler: reklamverene karsi tek gorsel dayanak
+   * olan kanit kareleri ve projenin temel sorusunun ("3 dakika yetiyor mu?") tek veri
+   * kaynagi olan heartbeat gecmisi. Yanit 200 doner, panel "N oge silindi" yazar.
+   */
+  const saklama = (ad, ham, varsayilan) => {
+    if (ham === undefined || ham === null || String(ham).trim() === '') return varsayilan
+    const n = Number(ham)
+    if (!Number.isInteger(n) || n < 7) return null
+    return n
+  }
+  const kanitGun = saklama('kanitGun', req.body?.kanitGun, 90)
+  const gecmisGun = saklama('gecmisGun', req.body?.gecmisGun, 180)
+  if (kanitGun === null || gecmisGun === null) {
+    return res.status(400).json({
+      error: 'gecersiz saklama suresi',
+      detail: 'kanitGun ve gecmisGun en az 7 olan tam sayi olmali (gun cinsinden). ' +
+        'Dogrulanmamis bir deger TUM kanit karelerini ve TUM heartbeat gecmisini silerdi.'
+    })
+  }
 
   const silinecek = Object.values(s.items).filter((i) => !kullanilan.has(i.sha256))
   const kuruProva = req.body?.uygula !== true
@@ -410,7 +572,6 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
 
   // Kanit kareleri: cihaz basina gunde bir tane birikiyor.
   // 50 cihaz x 365 gun = yilda ~18.000 dosya. Saklama suresi disinda kalanlari sil.
-  const kanitGun = Number(req.body?.kanitGun ?? 90)
   const kanitSiniri = Date.now() - kanitGun * 24 * 3600 * 1000
   let eskiKanit = 0
   for (const f of fs.readdirSync(paths.proof)) {
@@ -424,7 +585,6 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
 
   // Heartbeat gecmisi: gunluk bir dosya birikiyor. Oynatma loglari gibi faturaya
   // dayanak degil, olcum verisi - saklama suresi disinda kalanlar silinebilir.
-  const gecmisGun = Number(req.body?.gecmisGun ?? 180)
   const gecmisSiniri = Date.now() - gecmisGun * 24 * 3600 * 1000
   let eskiGecmis = 0
   for (const f of fs.readdirSync(paths.heartbeat)) {
@@ -437,17 +597,67 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
     if (!kuruProva) fs.rmSync(tam, { force: true })
   }
 
+  /*
+   * YETIM DOSYALAR - DISKI GERCEKTEN DOLDURAN SEY.
+   *
+   * Uc, kayitli ogelerden yola cikiyordu; oysa en buyuk dosyalar tam olarak KAYIT
+   * DISI kalanlar:
+   *  - incoming/ : /upload ham govdeyi 2 GB'a kadar buraya akitiyor. Yukleme
+   *    sirasinda sunucu yeniden baslarsa (elektrik, OOM, deploy) catch blogu HIC
+   *    calismaz ve 2 GB'lik ham dosya kalici olarak diskte kalir.
+   *  - content/  : ingest'in rename'i ile save() arasindaki bir kesinti
+   *    `content/<sha>.mp4` dosyasini kaydi olmadan birakir.
+   * Ikisini de ne bu uc ne baska bir sey siliyordu - oysa ucun kendi aciklamasi
+   * "bir yil sonra disk doldu diye aranmamak icin" diyor. Dolu diskte save() ve
+   * appendPlayLogs yazamaz, yani FATURA loglari da alinamaz.
+   *
+   * incoming/ icin 24 saat esigi: devam eden bir yuklemeyi kazara silmemek icin.
+   */
+  const YETIM_ESIK_MS = 24 * 3600 * 1000
+  const yetimIncoming = []
+  for (const f of fs.readdirSync(paths.incoming)) {
+    const tam = path.join(paths.incoming, f)
+    let st
+    try { st = fs.statSync(tam) } catch { continue }
+    if (!st.isFile()) continue
+    if (Date.now() - st.mtimeMs < YETIM_ESIK_MS) continue
+    yetimIncoming.push({ dosya: f, size: st.size })
+    bayt += st.size
+    if (!kuruProva) fs.rmSync(tam, { force: true })
+  }
+
+  // content/ altinda s.items'ta karsiligi olmayan dosyalar. DIKKAT: silinen ogeler
+  // yukarida s.items'tan cikarildigi icin bu tarama onlari da yakalar - zararsiz,
+  // dosyalari da orada silindi.
+  const kayitli = new Set(Object.values(s.items).map((i) => `${i.sha256}.mp4`))
+  const yetimIcerik = []
+  for (const f of fs.readdirSync(paths.content)) {
+    if (kayitli.has(f)) continue
+    const tam = path.join(paths.content, f)
+    let st
+    try { st = fs.statSync(tam) } catch { continue }
+    if (!st.isFile()) continue
+    yetimIcerik.push({ dosya: f, size: st.size })
+    bayt += st.size
+    if (!kuruProva) fs.rmSync(tam, { force: true })
+  }
+
   if (!kuruProva) save()
 
   res.json({
     kuruProva,
     eskiHeartbeatGecmisi: eskiGecmis,
-    silinen: adlar.length + eskiApk.length + eskiKanit + eskiGecmis,
+    silinen: adlar.length + eskiApk.length + eskiKanit + eskiGecmis +
+      yetimIncoming.length + yetimIcerik.length,
     kazanilanBayt: bayt,
     icerikler: adlar,
     apkler: eskiApk,
     eskiKanitKaresi: eskiKanit,
     kanitSaklamaGun: kanitGun,
+    gecmisSaklamaGun: gecmisGun,
+    // Kayit disi kalmis dosyalar: kuru provada da gorunur olmalari onemli.
+    yetimYuklemeler: yetimIncoming,
+    yetimIcerikler: yetimIcerik,
     not: kuruProva ? 'Gercekten silmek icin {"uygula":true} gonderin.' : 'Silindi.'
   })
 })
@@ -505,14 +715,40 @@ adminRouter.get('/report.csv', (req, res) => {
   const to = req.query.to ? String(req.query.to).slice(0, 10) : null
   const campaign = req.query.campaign ? String(req.query.campaign) : null
 
-  const rows = readPlayLogs(from, to).filter((r) =>
-    r.completed && (!campaign || r.itemId === campaign)
-  )
+  /*
+   * GUN SECIMI - FATURANIN EN HASSAS NOKTASI.
+   *
+   * Fatura gunu artik YAZMA ANINDA, sunucuda kararlastiriliyor ve satirda
+   * `faturaGunu` olarak duruyor (bkz. store.faturaGunuHesapla). Dosya adi da o
+   * gunden geldigi icin dosya suzgeci ile satirin gunu ASLA ayrisamaz - eski
+   * halde saati 1970'te kalmis bir cihazin kayitlari logs/1970-01-01.ndjson'a
+   * gidiyor ve hicbir fatura raporunda GORUNMUYORDU.
+   *
+   * Eski satirlarda (bu degisiklikten once yazilmis) alan yok: orada da dosya adi
+   * cihazin gunuydu, yani startedAt ile tutarli - geriye donuk olarak ondan
+   * turetiyoruz.
+   */
+  const gunu = (r) => {
+    if (typeof r.faturaGunu === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.faturaGunu)) return r.faturaGunu
+    const cihaz = String(r.startedAt || '').slice(0, 10)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cihaz)) return cihaz
+    return String(r.receivedAt || '').slice(0, 10)
+  }
+
+  const rows = readPlayLogs(from, to).filter((r) => {
+    if (!r.completed) return false
+    if (campaign && r.itemId !== campaign) return false
+    const g = gunu(r)
+    if (from && g < from) return false
+    if (to && g > to) return false
+    return true
+  })
 
   const agg = new Map()
   for (const r of rows) {
-    const key = `${r.itemId}\u0000${r.deviceId}\u0000${(r.startedAt || '').slice(0, 10)}`
-    const cur = agg.get(key) || { itemId: r.itemId, deviceId: r.deviceId, day: (r.startedAt || '').slice(0, 10), plays: 0, totalMs: 0, untrustedClock: 0 }
+    const gun = gunu(r)
+    const key = `${r.itemId}\u0000${r.deviceId}\u0000${gun}`
+    const cur = agg.get(key) || { itemId: r.itemId, deviceId: r.deviceId, day: gun, plays: 0, totalMs: 0, untrustedClock: 0 }
     cur.plays += 1
     cur.totalMs += Number(r.durationMs) || 0
     if (r.clockTrusted === false) cur.untrustedClock += 1
@@ -547,6 +783,17 @@ adminRouter.get('/report.csv', (req, res) => {
  * sanirken cihaz kendini 3. grupta sanir ve kademeli yayim ongorulemez olur.
  * Iki tarafin ayni sonucu urettigi testle dogrulanmistir.
  */
+/**
+ * rolloutGroup dogrulama: 1..config.rolloutGroups arasi tam sayi, degilse null.
+ * Bos/eksik deger `varsayilan`a duser.
+ */
+function grupSayisiDogrula (ham, varsayilan) {
+  if (ham === undefined || ham === null || String(ham).trim() === '') return varsayilan
+  const n = Number(ham)
+  if (!Number.isInteger(n) || n < 1 || n > config.rolloutGroups) return null
+  return n
+}
+
 /** Pozitif tam sayi mi? Degilse null. (Number(null)===0 tuzagi icin - bkz. /device) */
 function pozitifTam (v) {
   if (v === null || v === undefined || v === '') return null
@@ -554,7 +801,12 @@ function pozitifTam (v) {
   return Number.isInteger(n) && n > 0 ? n : null
 }
 
-function rolloutGroupOf (deviceId, groups) {
+/*
+ * DISA ACIK: sozlesmenin SUNUCU tarafi da test edilebilir olmali.
+ * Cihaz tarafi (RolloutGroup.kt) kendi testine sahipti; bu fonksiyon degilse
+ * "iki taraf ayni sonucu uretiyor" iddiasi yalnizca YARISI kilitlenmis olurdu.
+ */
+export function rolloutGroupOf (deviceId, groups) {
   if (groups <= 1) return 1
   let h = 0
   for (let i = 0; i < deviceId.length; i++) h = (Math.imul(31, h) + deviceId.charCodeAt(i)) | 0

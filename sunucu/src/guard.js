@@ -124,15 +124,26 @@ export function validId (value) {
 }
 
 /**
- * CSV enjeksiyonunu onle.
+ * CSV alanini TAM ALINTILA - hem enjeksiyona hem sutun kaymasina karsi.
  *
- * Reklamveren adi kullanici girdisidir. "=cmd|..." gibi bir deger Excel'de
- * FORMUL olarak calisir. Basindaki tehlikeli karakterleri notrlestiriyoruz.
+ * Iki ayri risk var:
+ *  1. FORMUL: "=cmd|..." gibi bir deger Excel'de calisir. Bastaki tehlikeli
+ *     karakterin onune tek tirnak koyuyoruz.
+ *  2. SUTUN KAYMASI: eski hali cift tirnagi hic ele almiyordu. Reklamveren adi
+ *     `"Acme" Reklam A.S.` ise satir `kahve-30;"Acme" Reklam A.S.;...` oluyor ve
+ *     Excel/LibreOffice bastaki tirnagi ALAN ALINTISI sayip sonraki sutunlari
+ *     kaydiriyordu - faturaya dayanak olan satirda otobus/gun/oynatma sayisi
+ *     sutunlari yer degistiriyordu. Sessiz ve dogrudan parayla ilgili bir hata.
+ *
+ * Cozum RFC 4180: alani her zaman tirnak icine al, icindeki tirnaklari ikile.
+ * O zaman ayiriciyi (;) ve CR/LF'i bozmaya da gerek kalmaz - alintili alanin
+ * icinde yasaldirlar ve veri KAYBEDILMEZ.
  */
 export function csvSafe (value) {
   const s = String(value ?? '')
-  const cleaned = s.replace(/[;\r\n]/g, ' ')
-  return /^[=+\-@\t]/.test(cleaned) ? `'${cleaned}` : cleaned
+  // Formul on eki tirnagin ICINDE uygulanir; disinda kalsa alintiyi bozardi.
+  const govde = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+  return `"${govde.replace(/"/g, '""')}"`
 }
 
 /** Log satirinda token gorunmesin. */

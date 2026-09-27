@@ -156,10 +156,30 @@ class DeviceAdmin(private val context: Context) {
             if (!wm.isWifiEnabled) wm.setWifiEnabled(true)
 
             val quoted = "\"$ssid\""
-            val mevcut = wm.configuredNetworks?.firstOrNull { it.SSID == quoted }
-            if (mevcut != null) {
-                wm.enableNetwork(mevcut.networkId, false)
-                return true
+
+            /*
+             * VAR OLAN PROFIL KOR KABUL EDILMEZ - HER ZAMAN YENIDEN YAZILIR.
+             *
+             * Onceden burada yalnizca SSID esitligine bakilip `enableNetwork` cagriliyor
+             * ve `true` donuluyordu; `psk` parametresi o dalda HIC OKUNMUYORDU. Sonucu
+             * agir, cunku bu fonksiyonun VAR OLMA SEBEBINI iptal ediyordu:
+             *
+             *  1. PAROLA ROTASYONU SESSIZ NO-OP: ACTION_NETWORK yayini tam olarak
+             *     "AP parolasi degisti" durumu icin eklendi. Rotasyonun normal hali
+             *     ayni SSID + yeni parolaydir; bu dal yeni parolayi hic yazmiyor,
+             *     ustelik cagirana `wifi=yazildi` diye BASARI donduruyordu. Yani
+             *     felaketi onlemek icin yazilan ozellik, felaketin ta kendisiydi.
+             *  2. BOZUK PROFIL DUZELTILEMIYOR: teknisyen Settings'ten elle yanlis
+             *     parolayla baglanmayi denerse cihazda ayni adli bozuk bir profil kalir
+             *     ve bir daha ASLA duzeltilemez (depoda removeNetwork cagrisi yoktu).
+             *
+             * preSharedKey geri okundugunda maskelenir ("*"), yani "parola ayni mi?"
+             * diye karsilastirmak MUMKUN DEGIL. Tek dogru yol: sil ve yeniden yaz.
+             */
+            wm.configuredNetworks?.filter { it.SSID == quoted }?.forEach {
+                if (!wm.removeNetwork(it.networkId)) {
+                    Log.w(TAG, "eski WiFi profili silinemedi (networkId=${it.networkId}) - uzerine yazilacak")
+                }
             }
 
             val conf = WifiConfiguration().apply {
