@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (38 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
+Testleri çalıştırın (44 test — Range ile devam eden indirme senaryosu ve güvenlik testleri dahil):
 
 ```bash
 npm test
@@ -116,7 +116,12 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 ```bash
 sudo ./onbellek-kutusu/kurulum.sh
 sudo nano /etc/nginx/sites-available/reklam   # upstream merkez adresini düzeltin
-ssh-keygen && ssh-copy-id reklam@MERKEZ       # rsync için parolasız erişim
+# SSH anahtarı ROOT için kurulmalı: aynalama cron'da root olarak çalışıyor.
+# Kendi kullanıcınıza kurmak sessizce işe yaramaz — cron'daki rsync parola ister,
+# bulamaz ve her saat başı başarısız olur (kimse bakmazsa günlerce).
+sudo ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519
+sudo ssh-copy-id -i /root/.ssh/id_ed25519 reklam@MERKEZ
+sudo -H ssh reklam@MERKEZ true && echo "parolasız erişim TAMAM"
 sudo /opt/reklam/ayna.sh                      # ilk aynalama
 sudo systemctl reload nginx
 ```
@@ -284,10 +289,33 @@ device owner olmadan sessiz güncelleme ve otomatik WiFi çalışmaz.
 
 ### 5.3 Kütüphaneyi ön-yükleyin
 
-Yeni cihazın sahaya boş gitmesine gerek yok. Provizyondan sonra cihazı **masadaki
-ağa** bağlayın (sunucuya erişen herhangi bir WiFi) ve kütüphane insin. Ayrı bir
-ön-yükleme aracı yok: normal senkron yolunu kullanmak, hem daha az kod hem de
-sahada çalıştığı zaten test edilmiş olan yol.
+Yeni cihazın sahaya boş gitmesine gerek yok: provizyondan sonra kütüphane masada
+inebilir. Ayrı bir ön-yükleme aracı yok — normal senkron yolunu kullanmak hem daha
+az kod hem de sahada çalıştığı zaten test edilmiş olan yol.
+
+**Ama cihaza yalnızca provizyonda verilen WiFi profili yazılır.** İki yolunuz var:
+
+1. **Masadaki AP'yi noktanın SSID/parolasıyla yayınlayın** (en basit): cihaz onu
+   kendi ağı sanar, senkron olur, sahaya takılınca hiçbir şey değişmez.
+2. **Ağ bilgisini sonradan güncelleyin** — kimliğe dokunmadan:
+
+```bash
+adb shell am broadcast -a com.otobusreklam.player.NETWORK \
+  -n com.otobusreklam.player/.provision.ProvisionReceiver \
+  --es secret "$PROVISION_SECRET" \
+  --es ssid "MASA-AP" --es psk "masa-parolasi"
+# -> TAMAM ag guncellendi cihaz=OTOBUS-014 ssid=MASA-AP wifi=yazildi
+```
+
+> **Bu yol aynı zamanda bir operasyon sigortasıdır.** AP parolası değişirse
+> (personel değişikliği, sızma şüphesi) tüm filo erişilemez hale gelir. Bu yayın
+> olmasa tek çıkış yolu **her otobüse gidip fabrika ayarlarına dönmek** olurdu —
+> yani rutin bir işletme adımı felakete dönüşürdü.
+>
+> `deviceId` ve `token` **değişmez**: yalnızca ağ ve sunucu adresi güncellenir.
+> Sunucu adresini değiştirmek içerik güvenliğini bozmaz, çünkü manifest Ed25519
+> ile imzalı — sahte bir sunucu geçerli manifest üretemez, en fazla hizmet
+> kesintisi yapabilir (ki cihaza fiziksel erişimi olan biri bunu zaten yapabilir).
 
 ---
 
@@ -425,7 +453,7 @@ eski heartbeat geçmişi. **Oynatma logları silinmez** — onlar faturanın day
 | "IMZA GECERSIZ" hatası | `gradle.properties`'teki `MANIFEST_PUBLIC_KEY`, sunucunun açık anahtarıyla aynı mı? |
 | İndirme hiç ilerlemiyor | Önbellek kutusu 206 dönüyor mu? (`curl -r 0-1023 -I`) |
 | Cihaz rastgele resetleniyor | Besleme TV'nin USB'sinde mi? Yük altında voltajı ölçün |
-| Hep aynı reklam dönüyor | Teşhis ekranını açın (kumandada INFO/MENU): liste sürümü ve son senkron |
+| Hep aynı reklam dönüyor | Teşhis ekranını açın (kumandada **2 saniye içinde 3 kez** INFO veya MENU): liste sürümü, son senkron, saat durumu, saat dilimi. Ekran 60 sn sonra kendiliğinden kapanır. |
 | Süresi geçmiş reklam oynuyor | Teşhis ekranında "saat: ŞÜPHELİ" mi yazıyor? |
 | Kare atlıyor | Dosya transcode standardından mı geçti? HEVC olmamalı |
 | Güncelleme gitmiyor | APK'lar **aynı anahtarla** mı imzalı? `rolloutGroup` cihazın grubunu kapsıyor mu? |

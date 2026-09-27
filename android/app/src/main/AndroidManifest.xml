@@ -96,6 +96,13 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.otobusreklam.player.PROVISION" />
+                <!--
+                  AG BILGISI GUNCELLEME: yalnizca ssid/psk/baseUrl degistirir, cihaz
+                  KIMLIGINE (deviceId/token) dokunmaz. Provizyondan sonra da calisir.
+                  Olmadan AP parolasinin degismesi TUM filoyu erisilemez kiliyor ve tek
+                  cikis yolu her otobuse gidip fabrika ayarlarina donmek oluyordu.
+                -->
+                <action android:name="com.otobusreklam.player.NETWORK" />
             </intent-filter>
         </receiver>
 

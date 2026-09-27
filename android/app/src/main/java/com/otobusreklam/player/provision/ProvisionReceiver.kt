@@ -18,6 +18,12 @@ import java.security.MessageDigest
  *     --es secret "..." --es deviceId "OTOBUS-014" --es token "..." \
  *     --es baseUrl "http://10.20.0.10:8080" --es ssid "..." --es psk "..."
  *
+ * AG BILGISI GUNCELLEME (provizyondan sonra, kimlige dokunmadan):
+ *
+ *   adb shell am broadcast -a com.otobusreklam.player.NETWORK \
+ *     -n com.otobusreklam.player/.provision.ProvisionReceiver \
+ *     --es secret "..." --es ssid "YENI-AP" --es psk "yeni-parola"
+ *
  * GUVENLIK: Alici exported olmak zorunda (adb shell baska bir uygulamadir),
  * ama iki katmanla korunuyor:
  *   1) SADECE cihaz henuz provizyonlanmamisken kabul eder
@@ -35,16 +41,64 @@ class ProvisionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val config = Config(context)
 
-        if (config.provisioned) {
-            Log.w(TAG, "REDDEDILDI: cihaz zaten provizyonlanmis")
-            reply("REDDEDILDI: zaten provizyonlanmis")
-            return
-        }
-
+        // Sir HER YOLDA once dogrulanir.
         val secret = intent.getStringExtra("secret").orEmpty()
         if (!constantTimeEquals(secret, BuildConfig.PROVISION_SECRET)) {
             Log.w(TAG, "REDDEDILDI: provizyon sirri yanlis")
             reply("REDDEDILDI: sir yanlis")
+            return
+        }
+
+        /*
+         * AG BILGISI GUNCELLEME - provizyondan SONRA da calisir.
+         *
+         * NEDEN ZORUNLU: cihaza yazilan tek WiFi profili provizyon aninda verilendir
+         * ve baska hicbir yol onu degistiremiyordu. Bunun iki somut sonucu vardi:
+         *
+         *  1. AP PAROLASI DEGISIRSE tum filo erisilemez hale gelir ve tek cikis yolu
+         *     HER OTOBUSE GIDIP fabrika ayarlarina donmek olur. Parola degisikligi
+         *     sira dişı bir olay degil: personel degisikligi, sizma suphesi, cihaz
+         *     kaybi. Yani sistem, rutin bir isletme adimini felakete ceviriyordu.
+         *  2. Belgeler "provizyondan sonra cihazi MASADAKI aga baglayin, kutuphane
+         *     insin" diyordu - ama cihaza ikinci bir profil eklemenin yolu YOKTU.
+         *     Belge, kodda bulunmayan bir adimi anlatiyordu.
+         *
+         * KIMLIGE DOKUNMUYOR: deviceId ve token degismez. Degisen yalnizca AG ve
+         * SUNUCU ADRESI. Sunucu adresini degistirmek icerik guvenligini bozmaz -
+         * manifest Ed25519 ile imzali, yani sahte bir sunucu gecerli manifest
+         * uretemez; en fazla hizmet kesintisi yapabilir, ki cihaza fiziksel erisimi
+         * olan biri bunu zaten yapabilir.
+         */
+        if (intent.action == ACTION_NETWORK || (config.provisioned && intent.getBooleanExtra("agGuncelle", false))) {
+            if (!config.provisioned) {
+                reply("REDDEDILDI: cihaz henuz provizyonlanmamis - once normal provizyon")
+                return
+            }
+            val yeniSsid = intent.getStringExtra("ssid").orEmpty()
+            val yeniPsk = intent.getStringExtra("psk").orEmpty()
+            val yeniBase = intent.getStringExtra("baseUrl").orEmpty()
+            val yeniApi = intent.getStringExtra("apiUrl").orEmpty()
+
+            if (yeniSsid.isBlank() && yeniBase.isBlank()) {
+                reply("REDDEDILDI: ssid veya baseUrl gerekli")
+                return
+            }
+            if (yeniSsid.isNotBlank()) { config.ssid = yeniSsid; config.psk = yeniPsk }
+            if (yeniBase.isNotBlank()) config.baseUrl = yeniBase
+            if (yeniApi.isNotBlank()) config.apiUrl = yeniApi
+
+            val admin = DeviceAdmin(context)
+            val ok = if (config.ssid.isNotBlank()) admin.ensureWifi(config.ssid, config.psk) else true
+            NetworkWatcher(context).apply { start(); triggerIfAlreadyConnected() }
+
+            Log.i(TAG, "ag bilgisi guncellendi: ssid=${config.ssid} base=${config.baseUrl}")
+            reply("TAMAM ag guncellendi cihaz=${config.deviceId} ssid=${config.ssid} wifi=${if (ok) "yazildi" else "YAZILAMADI!"}")
+            return
+        }
+
+        if (config.provisioned) {
+            Log.w(TAG, "REDDEDILDI: cihaz zaten provizyonlanmis")
+            reply("REDDEDILDI: zaten provizyonlanmis (ag bilgisi icin: -a $ACTION_NETWORK)")
             return
         }
 
@@ -87,5 +141,9 @@ class ProvisionReceiver : BroadcastReceiver() {
         return MessageDigest.isEqual(ba, bb) && a.isNotEmpty()
     }
 
-    private companion object { const val TAG = "ProvisionReceiver" }
+    companion object {
+        private const val TAG = "ProvisionReceiver"
+        /** Yalnizca ag/sunucu adresini gunceller; cihaz kimligine dokunmaz. */
+        const val ACTION_NETWORK = "com.otobusreklam.player.NETWORK"
+    }
 }

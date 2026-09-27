@@ -113,6 +113,8 @@ Montajdan ONCE elle dogrulayin:
   [ ] Panelde heartbeat gorunuyor
   [ ] Kumanda hicbir sey yapmiyor (kiosk aktif)
   [ ] Besleme AYRI 5V/2A kaynaktan - TV'nin USB'sinden DEGIL
-  [ ] Teshis ekrani: kumandada INFO/MENU tusu -> "sahip: evet" yaziyor
+  [ ] Teshis ekrani: kumandada 2 SANIYEDE 3 KEZ INFO/MENU -> "sahip: evet" yaziyor
+  (tek basis yetmez: yolcu kumandaya dokununca reklamin uzerine teknik dokum
+   yazilmasin. Ekran 60 sn sonra kendiliginden kapanir.)
 
 SON

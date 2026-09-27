@@ -166,7 +166,7 @@ cihazda yapılır:
 
 ```bash
 adb install reklam-app.apk
-adb shell dpm set-device-owner com.sirket.reklam/.AdminReceiver
+adb shell dpm set-device-owner com.otobusreklam.player/.admin.AdminReceiver
 ```
 
 Cihaza Google hesabı eklendiyse komut başarısız olur → fabrika ayarı gerekir. Bu yüzden
@@ -184,7 +184,7 @@ Ayrıntılı spesifikasyon: [`uygulama-spec.md`](uygulama-spec.md)
 |---|---|---|
 | Otobüs | **Kotlin + Media3/ExoPlayer + Room + OkHttp** | Oynat, senkronla, logla, kendini güncelle |
 | Tetikleyici | **`ConnectivityManager.NetworkCallback`** | WiFi görüldüğü an senkron. `PeriodicWorkRequest` **kullanma** — minimum periyodu 15 dakika, 3 dakikalık pencereyi kaçırır |
-| Senkron | HTTPS + **Range** istekleri, 4 MB parça, SHA-256 | Kesintide kaldığı yerden devam |
+| Senkron | **Düz HTTP + Range** istekleri, 4 MB parça, SHA-256 | Kesintide kaldığı yerden devam. HTTPS **kullanılmıyor**: bütünlük manifestin Ed25519 imzasıyla sağlanıyor (onbellek kutusu ele geçse bile sahte reklam yollanamaz) ve TLS, kutudaki nginx önbelleğini/Range'i gereksiz yere karmaşıklaştırırdı. Gizlilik değeri de düşük: içerik zaten halka açık otobüs ekranlarında yayınlanıyor. **Bedeli:** ağa erişen biri trafiği okuyabilir ve `Date` başlığını değiştirebilir — bu yüzden güvenilir saat çapası yalnızca **imzalı** `serverTime`'dan kurulur. |
 | Nokta | nginx + rsync aynası | LAN hızında servis |
 | Merkez | Panel + ffmpeg kuyruğu + manifest imzalama + nginx | Yükleme, planlama, rapor |
 
@@ -203,7 +203,7 @@ Bunlar kısıtın gerçek bedeli. Hiçbirini "sonra bakarız" diye bırakma.
 | Oynatma kanıtı gecikmeli | Loglar bir sonraki senkronda gelir. Reklamverene raporun **1–2 gün gecikmeli** olduğunu baştan söyle. |
 | Acil uygulama düzeltmesi yavaş yayılır | Uygulama güncellemesi de manifest üzerinden, **kademeli** (önce 2 cihaz, sonra hepsi) gitsin. Bozuk sürümü 50 cihaza aynı gün gönderme. |
 | Bir otobüs günlerce noktaya gelmezse | Tekniker telefonu hotspot'u veya dizüstüyle kurulan yedek AP ile zorla senkron. **USB yedek yolunu da açık tut.** |
-| Saat kayması | Stick'lerde pil destekli RTC genelde yok. **Her senkronda NTP**, arada monotonik süre takibi. Saat güvenilmezse kural: **şüphede kalırsan süresi geçmiş say ve oynatma.** |
+| Saat kayması | Stick'lerde pil destekli RTC genelde yok. **NTP kullanılmıyor** (ayrı port/erişim gerekir ve PtMP kopukken zaten çalışmaz): gerçek zaman **imzalı manifest gövdesindeki `serverTime`**'dan alınır, arada monotonik sayaçla (`elapsedRealtime`) ilerletilir, yeniden başlatma `BOOT_COUNT` ile tespit edilir. İmzasız HTTP `Date` başlığı yalnızca **zayıf** çapa kurar (1970 damgasını düzeltir, bitiş tarihi zorlamasını etkilemez). Saat güvenilmezse kural: **şüphede kalırsan süresi geçmiş say ve oynatma** → evergreen'e düşülür. Ayrıntı: `docs/uygulama-spec.md` §7 |
 
 **Şunu Faz 0'da doğrula:** her otobüs gerçekten her gün bu 3 noktadan birine giriyor mu?
 Girmiyorsa o otobüs için ayrı bir plan gerekir (ör. garaj/servis noktasına da AP).
@@ -221,15 +221,15 @@ Girmiyorsa o otobüs için ayrı bir plan gerekir (ör. garaj/servis noktasına 
 | 5 | Uygulama takılması | Foreground service + watchdog timer + gece kontrollü reboot |
 | 6 | Tek AP'de 20 araç boğulması | 2–3 AP, ch 1/6/11, 5 GHz varsa tercih, kademeli başlama (rastgele 0–15 sn gecikme) |
 | 7 | Pencere yetmedi, dosya yarım | Parçalı indirme + öncelik sıralaması + hash doğrulanmadan oynatmama |
-| 8 | Yeni liste bozuk / uygulama çöküyor | 3 açılış denemesinde çökerse **otomatik önceki sürüme dön** |
+| 8 | Yeni liste bozuk / uygulama çöküyor | **Otomatik sürüm geri dönüşü YOK — stok Android'de kurulamaz.** `PackageInstaller` sürüm düşürmeyi reddeder (`INSTALL_FAILED_VERSION_DOWNGRADE`) ve bunu aşan `setRequestDowngrade` bir `@SystemApi`'dir. Yerine: 3 başarısız açılıştan sonra **güvenli mod** (yalnızca oynatma + senkron; kanıt karesi ve gece reboot atlanır), durum panele düşer, kurtarma **ileriye doğru düzeltmedir** (daha yüksek `versionCode` + `critical=1`). Riski asıl azaltan şey **kademeli yayım**: önce kanarya, 48 saat sonra hepsi. |
 | 9 | Süresi geçmiş reklam oynamaya devam ediyor | Bitiş tarihi cihazda zorlanır + saat şüphesinde süresi geçmiş say |
 | 10 | Ekran boş kalması | Evergreen yedek set + eski dosyayı yenisi doğrulanana kadar silmeme |
-| 11 | İçeriğe müdahale | İmzalı manifest (Ed25519), HTTPS, cihaz başına token; imza geçersizse hiçbir şey indirilmez |
+| 11 | İçeriğe müdahale | **İmzalı manifest (Ed25519)** — imza geçersizse hiçbir şey indirilmez ve mevcut liste çalmaya devam eder. Cihaz başına token; `/app` (APK) ve varsayılan olarak `/content` token ister. HTTPS **yok** (yukarıdaki tabloya bakın); güvence imzadan gelir, taşımadan değil. |
 | 12 | Önbellek kutusu ölürse | Nokta AP'leri PtMP üzerinden merkeze düşer (yavaş ama çalışır); kutu yedeği rafta dursun |
 | 13 | PtMP linki kopması | Aynalama sayesinde nokta mevcut içerikle çalışmaya devam eder |
-| 14 | TV kapalı / yanlış giriş / kısık ses | HDMI-CEC ile aç + girişi kilitle + TV kiosk modu + ses kilidi |
+| 14 | TV kapalı / yanlış giriş / kısık ses | **Yazılımdan çözülemez, montajla çözülür.** HDMI-CEC ve TV ses kilidi uygulamada **yok**: CEC desteği TV'ye göre değişir, güvenilmez ve çoğu TV kapalıyken de HDMI +5V'u sürer — yani yazılım TV'nin açık olduğunu **ölçemez** bile. Karşılık: TV'yi sürekli beslemede/otomatik açılır ayarda bırakın, girişi HDMI'da kilitleyin, TV kumandasını araçtan çıkarın. Oynatıcı **sesi sabit olarak kapalıdır** (`volume = 0f`, otobüs içi ses politikası); ses istiyorsanız kodda tek satırdır ama TV'de de açık olması gerekir. Ekranın gerçekten çalıştığı **saha denetimiyle** doğrulanır — bkz. kanıt karesinin dürüst sınırı. |
 | 15 | Şoför cihazı çekmesi | Kilitli kutu, erişilebilir port yok |
-| 16 | "Reklamım dönmedi" iddiası | Oynatma kanıtı logu + periyodik ekran görüntüsü |
+| 16 | "Reklamım dönmedi" iddiası | Oynatma kanıtı logu (`play_log` → fatura raporu) + **kanıt karesi**. Kanıt karesi ekran görüntüsü **DEĞİL**: normal bir Android uygulaması ekranın gerçek görüntüsünü sessizce alamaz (`MediaProjection` kullanıcı onayı ister, `CAPTURE_VIDEO_OUTPUT` imza seviyesi bir izindir; cihaz sahibi olmak bunu değiştirmez). Onun yerine **oynatılan dosyadan** kare çıkarılıp üzerine cihaz kimliği ve zaman damgası yazılır. Kanıtladığı: o içeriğin o cihazda o saatte oynatıldığı. **Kanıtlamadığı:** TV'nin açık olduğu. Reklamverene verilen raporda bu sınır açıkça yazılmalı. |
 
 ---
 
@@ -322,7 +322,7 @@ kayıplar: anlık kontrol yok, raporlar gecikmeli.
 ### Faz 3 — Ticarileştirme
 
 - [ ] Oynatma kanıtı raporu (CSV/PDF), reklamveren başına
-- [ ] Periyodik ekran görüntüsü kanıtı
+- [ ] Kanıt karesi (ekran görüntüsü DEĞİL — oynatılan dosyadan kare; sınırı §6/16'da)
 - [ ] Reklamveren self-servis yükleme + onay akışı
 - [ ] Faturalama entegrasyonu
 - [ ] Nokta/hat bazlı hedefleme (hangi otobüs hangi listeyi alsın)

@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "description": "Otobus ici reklam yayin sistemi - merkez sunucu",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "anahtar-uret": "node scripts/anahtar-uret.js",
     "cihaz-ekle": "node scripts/cihaz-ekle.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "anahtar-goster": "node scripts/anahtar-goster.js"
   },
   "dependencies": {
     "express": "^4.21.2"

@@ -312,6 +312,39 @@ test('nokta onbellegi manifesti GERCEKTEN onbellekleyebiliyor', async () => {
   assert.match(blok, /proxy_cache_use_stale/, 'bayat kopya servis edilebilmeli')
 })
 
+/**
+ * BELGELERDEKI TEST SAYISI GERCEGI YANSITMALI.
+ *
+ * Kucuk bir sey gibi gorunuyor ama bu belgelerin isi GUVEN vermek: "43 test geciyor"
+ * cumlesi, okuyanin kodu tek tek dogrulamadan ilerlemesini sagliyor. Sayi bir kez
+ * kaydiginda okuyan bunu anlamaz; anladigi anda ise belgelerin GERI KALANINA da
+ * guvenmemeye baslar - ki bu projede belgeler mimarinin neden boyle oldugunu tasiyan
+ * asil yer. Sayiyi elle guncel tutmak kacinilmaz olarak basarisiz olur, o yuzden
+ * testle bagliyoruz.
+ */
+test('belgelerdeki test sayisi gercek sayiyla ayni', () => {
+  const dosyalar = ['e2e.test.js', 'guvenlik.test.js', 'transcode.test.js']
+  let gercek = 0
+  for (const d of dosyalar) {
+    const kaynak = fs.readFileSync(new URL(`./${d}`, import.meta.url), 'utf8')
+    gercek += (kaynak.match(/^test\(/gm) || []).length
+  }
+
+  for (const yol of ['../../README.md', '../../docs/kurulum-calistirma.md']) {
+    const metin = fs.readFileSync(new URL(yol, import.meta.url), 'utf8')
+    const iddialar = [...metin.matchAll(/(\d+)\s*test/g)].map((m) => Number(m[1]))
+    // Sunucu test sayisini anan her yer dogru olmali. (65 = Kotlin testleri, ayri.)
+    const sunucuIddialari = iddialar.filter((n) => n > 20 && n !== 65)
+    for (const n of sunucuIddialari) {
+      assert.equal(
+        n, gercek,
+        `${yol} icinde "${n} test" yaziyor ama gercek sayi ${gercek}. ` +
+        'Test eklediyseniz belgeyi de guncelleyin.'
+      )
+    }
+  }
+})
+
 test('cok fazla basarisiz admin denemesi IP kilitler', async () => {
   // Bu test EN SONDA: kilitlenen IP sonraki testleri etkilerdi.
   guard.resetFailures()

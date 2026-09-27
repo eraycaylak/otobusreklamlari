@@ -22,7 +22,7 @@ docs/              Belgeler
 # 1) Merkez sunucu
 cd sunucu && npm install && npm run anahtar-uret
 ADMIN_TOKEN="uzun-rastgele-bir-dize" npm start     # panel: http://localhost:8080
-npm test                                            # 38 test (uçtan uca + güvenlik + transcode)
+npm test                                            # 44 test (uçtan uca + güvenlik + transcode)
 
 # 2) Android
 cd android
@@ -115,7 +115,7 @@ Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda gir
 
 | Ne | Nerede | Kapsam |
 |---|---|---|
-| **Sunucu — 38 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı |
+| **Sunucu — 44 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı |
 | **Android — 65 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı), indirme önceliği, **sunucuyla kademeli yayım hash uyumu** |
 | **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
 

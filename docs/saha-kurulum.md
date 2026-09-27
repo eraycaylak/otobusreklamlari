@@ -73,7 +73,14 @@
 1. Sigortayı ve besleme noktasını **işletmeci teknikeriyle** belirle (yazılı onay şart).
 2. DC-DC dönüştürücüyü bağla, çıkışı 5 V / 2 A ölç. Marş anında düşüşü kontrol et.
 3. Stick'i kutuya al, HDMI'yı tak, güç kablosunu **DC-DC'ye** bağla (TV USB'ye değil).
-4. TV'de HDMI-CEC'i aç, girişi kilitle, sesi ayarla, TV'yi otel/kiosk moduna al.
+4. TV'de girişi HDMI'da **kilitle**, TV'yi otel/kiosk moduna al, sürekli
+   beslemede/otomatik açılır ayara getir, **kumandayı araçtan çıkar**.
+   *HDMI-CEC uygulamadan sürülmüyor* — desteği TV'ye göre değişir ve güvenilmez;
+   bu adım TV menüsünden elle yapılır.
+   *Ses:* oynatıcı sesi **yazılımda sabit olarak kapalıdır** (`volume = 0f` —
+   otobüs içi ses politikası). Bu yüzden TV sesini ayarlamanın bir etkisi yok;
+   sesli yayın isteniyorsa önce uygulamada açılması gerekir (tek satır), sonra
+   TV'de ses seviyesi kilitlenir.
 5. Stick provizyonunu yap — [`uygulama-spec.md` §10](uygulama-spec.md)
 6. Kabloları kelepçele, kutuyu kilitle.
 
@@ -106,7 +113,13 @@
 - [ ] Ortalama pencere başına inen bayt ölçüldü, 3 dakikaya sığıyor
 - [ ] Yarım kalan indirme sonraki ziyarette tamamlandı (kayıtla kanıtlandı)
 - [ ] 72 saat senkron olmayan cihaz uyarısı çalıştı
-- [ ] Sessiz uygulama güncellemesi 2 cihazda çalıştı, geri dönüş test edildi
+- [ ] Sessiz uygulama güncellemesi kanaryada (rollout grubu 1) çalıştı
+- [ ] **Güvenli mod** test edildi: kasten bozuk bir sürüm yayınlayıp 3 açılış
+      başarısız olunca cihaz oynatmaya devam etti, panelde `GUVENLI MOD` göründü ve
+      **düzeltilmiş sürüm** (`critical=1`) ulaştı.
+      *Not: "önceki sürüme otomatik geri dönüş" diye bir test YOK — o mekanizma stok
+      Android'de kurulamaz (`PackageInstaller` sürüm düşürmeyi reddeder). Kurtarma
+      yolu ileriye doğru düzeltmedir; kabul kriteri de bu olmalı.*
 - [ ] [`uygulama-spec.md` §12](uygulama-spec.md) kırma testlerinin tamamı geçti
 
 ---

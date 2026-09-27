@@ -97,27 +97,54 @@ devam eder. Önbellek kutusu ele geçse bile cihaza sahte reklam yüklenemez.
 ```
 WiFi görüldü (NetworkWatcher)
    │
+   ├─ 0. lastError TEMIZLE
+   │     (Panel bu alanı gösteriyor. Yalnızca pencerenin sonunda yazılsaydı,
+   │      manifest alamayıp erken dönen bir tur ÖNCEKİ pencerenin hatasını
+   │      "güncel durum" gibi gösterirdi.)
+   │
    ├─ 1. MANIFEST — GECİKMESİZ
    │     (~2 KB. 20 cihaz aynı anda çekse 40 KB; AP'yi boğmaz.
    │      Kademeli başlatmayı buradan SONRA yapmak pencereyi boşa harcamaz.)
-   │     → Date başlığından saat düzeltmesi
-   │     → İMZA DOĞRULAMA (geçmezse buradan geri dönülür)
+   │     → `Date` başlığından ZAYIF saat çapası — BAŞARISIZ YANITTA DA okunur
+   │       (401/500 bile Date taşır; saati bozuk cihazın tek kaynağı olabilir)
+   │     → İMZA DOĞRULAMA (geçmezse buradan geri dönülür, mevcut liste çalmaya devam)
+   │     → imzalı gövdedeki `serverTime`'dan GÜVENİLİR çapa  (§7)
    │
    ├─ 2. Manifesti diske yaz + oynatıcıyı uyar
    │     (İNDİRMEDEN ÖNCE: süresi dolan reklam dosyası hâlâ diskte olsa bile
    │      anında yayından düşsün.)
    │
-   ├─ 3. Kademeli başlatma: rastgele 0–15 sn
+   ├─ 3. TEMİZLİK — İNDİRMEDEN ÖNCE
+   │     Artık manifestte olmayan dosyalar + öksüz contents/chunks satırları.
+   │     SIRA KRİTİK: temizlik pencerenin sonunda olduğunda kısır döngü oluşuyordu —
+   │     disk dolu → indirmeler başarısız → temizliğe sıra gelmiyor → disk bir daha
+   │     boşalmıyor. Temizlikten sonra da yer yoksa sebep panele düşer.
+   │     (Silmek güvenli: persist() manifestte olmayan itemları zaten düşürdü,
+   │      yani o içerik ARTIK OYNATILAMAZ durumda.)
    │
-   ├─ 4. Öncelik sırasıyla indir
+   ├─ 4. Kademeli başlatma: rastgele 0–15 sn
+   │
+   ├─ 5. Öncelik sırasıyla indir
    │     P0  eksik evergreen        → ekranın boş kalma riski her şeyden önce
    │     P1  KRİTİK uygulama güncellemesi
    │     P2  eksik kampanyalar      → validFrom'u en yakın, sonra KALAN BAYTI EN AZ
    │     P3  normal uygulama güncellemesi
+   │     (APK yalnızca İNDİRİLİR; kurulum 8. adımda.)
    │
-   ├─ 5. Oynatıcıyı tekrar uyar
-   ├─ 6. Telemetri: loglar → heartbeat → kanıt karesi (pencerenin sonunda)
-   └─ 7. Temizlik: artık manifestte olmayan dosyalar, 30 günden eski loglar
+   ├─ 6. Oynatıcıyı tekrar uyar
+   │
+   ├─ 7. Telemetri: loglar → heartbeat → kanıt karesi (pencerenin sonunda)
+   │     → sonra LOG BUDAMA (tavanı aşan en eski satırlar).
+   │       SIRA KRİTİK: budama yüklemeden ÖNCE yapılsaydı, tam bu pencerede
+   │       gönderilebilecek FATURA SATIRLARI gönderilmeden silinirdi — yani veri
+   │       kaybını önlemek için konan tavan, kaybı kendisi üretirdi.
+   │
+   └─ 8. UYGULAMA GÜNCELLEMESİNİ KUR — EN SON
+         `commit()` başarılı olursa sistem SÜRECİ ÖLDÜRÜR. Kurulum pencerenin
+         ortasında yapıldığında bundan sonrası hiç çalışmıyordu: loglar
+         yüklenmiyor, heartbeat gitmiyor, temizlik yapılmıyor, `lastSyncAt`
+         yazılmıyordu — güncelleme alan cihaz panelde "günlerdir senkron olmadı"
+         görünüyordu.
 ```
 
 **P2'deki "kalan baytı en az olan önce" kuralı bilinçli:** yarım 5 dosya yerine
@@ -199,7 +226,8 @@ files/
 - Watchdog: 30 sn'de bir ilerleme kontrolü → 2. takılmada oynatıcı yeniden kurulur,
   6. takılmada cihaz yeniden başlatılır
 - Gece 03:25–03:35 arası kontrollü yeniden başlatma (garajda, yayın saatinde değil)
-- Teşhis ekranı: kumandada INFO/MENU → cihaz, sürüm, liste, son senkron, saat durumu,
+- Teşhis ekranı: kumandada **2 saniye içinde 3 kez** INFO/MENU → cihaz, sürüm, liste,
+  son senkron, saat durumu, saat dilimi,
   device owner durumu
 
 ### Liste değişimi neden sınırda?
@@ -212,7 +240,7 @@ süresidir (~100–300 ms siyah), üstelik günde en fazla birkaç kez.
 
 ## 7. Saat
 
-`clock/ClockManager.kt` + `clock/ClockMath.kt` (saf mantık, 15 birim testi)
+`clock/ClockManager.kt` + `clock/ClockMath.kt` (saf mantık, 16 birim testi)
 
 Ucuz stick'lerde pil destekli RTC genelde **yoktur**; güç kesilince saat sıfırlanır
 veya 1970'e düşer. `validUntil` zorlaması saate bağlı olduğu için bu doğrudan ticari
