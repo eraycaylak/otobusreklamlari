@@ -3,6 +3,7 @@
 USB bellek taşımayı bitiren, kendi uygulamamızla çalışan merkezi yayın sistemi.
 
 **Belgeler:**
+[**Senden gerekenler**](docs/senden-gerekenler.md) ·
 [Kurulum ve çalıştırma](docs/kurulum-calistirma.md) ·
 [Uygulama mimarisi](docs/uygulama-spec.md) ·
 [Genel plan](docs/plan.md) ·
