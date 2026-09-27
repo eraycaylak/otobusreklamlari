@@ -7,7 +7,6 @@ import com.otobusreklam.player.data.ContentState
 import com.otobusreklam.player.data.ItemEntity
 import com.otobusreklam.player.store.FileStore
 import java.io.File
-import java.time.Instant
 import java.time.ZoneId
 
 /**
@@ -63,34 +62,33 @@ class PlaylistBuilder(
             return Result(emptyList(), "oynatilacak icerik yok")
         }
 
+        val kampanyaSayisi = playable.count { !it.evergreen }
         val reason = when {
-            playable.isNotEmpty() -> "normal (${playable.size} icerik)"
-            !clockOk -> "saat supheli -> sadece evergreen"
-            else -> "uygun kampanya yok -> evergreen"
+            !clockOk -> "saat SUPHELI -> sadece evergreen (${chosen.size})"
+            kampanyaSayisi > 0 -> "normal (${kampanyaSayisi} kampanya + ${playable.size - kampanyaSayisi} evergreen)"
+            else -> "uygun kampanya yok -> evergreen (${chosen.size})"
         }
 
         return Result(interleaveByWeight(chosen), reason)
     }
 
     /**
-     * Gecerlilik kontrolu.
+     * Gecerlilik kontrolu - kural [Eligibility] icinde, Android'den bagimsiz ve test edilmis.
      *
-     * SAAT SUPHELIYSE kampanya icerigi OYNATILMAZ.
-     * Sebep ticari: suresi bitmis veya iptal edilmis bir reklami yayinlamak,
-     * sozlesmesi olmayan envanter satmak demektir. 4G olmadigi icin uzaktan
-     * "kaldir" komutu yok; tek guvencemiz cihazin kendi kararIdir.
-     * Supheliyken oynatmamak, supheliyken oynatmaktan her zaman daha ucuzdur.
+     * Risk asimetrik: suresi bitmis veya iptal edilmis bir reklami oynatmak sozlesmesi
+     * olmayan envanter yayinlamaktir; oynatmamak ise sadece bir bosluktur. Bu yuzden
+     * her belirsizlikte OYNATMIYORUZ.
      */
-    private fun isEligible(item: ItemEntity, now: Long, clockTrusted: Boolean): Boolean {
-        if (item.evergreen) return true
-        if (!clockTrusted) return false
-        if (item.validFrom != null && now < item.validFrom) return false
-        if (item.validUntil != null && now > item.validUntil) return false
-        return inDaypart(item.dayparts, now)
-    }
-
-    private fun inDaypart(spec: String, now: Long): Boolean =
-        Daypart.matches(spec, Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime())
+    private fun isEligible(item: ItemEntity, now: Long, clockTrusted: Boolean): Boolean =
+        Eligibility.isEligible(
+            evergreen = item.evergreen,
+            clockTrusted = clockTrusted,
+            validFrom = item.validFrom,
+            validUntil = item.validUntil,
+            dayparts = item.dayparts,
+            nowMs = now,
+            zone = ZoneId.systemDefault()
+        )
 
     /**
      * Agirlikli siralama.

@@ -54,6 +54,11 @@ class PlayerActivity : AppCompatActivity() {
     /** Su an oynayan ogenin kaydi - gecis aninda log yazmak icin tutuluyor. */
     private var currentEntry: PlaylistBuilder.Entry? = null
     private var currentStartedAt: Long = 0L
+    /* Fatura butunlugu: bu ikisi OYNATMANIN BASLADIGI anda yakalanir, yazma aninda
+       degil. Yazma asenkron oldugu icin arada bir senkron gerceklesirse 1970 damgali
+       bir kayit "saati guvenilir" olarak faturaya girebilirdi. */
+    private var currentClockTrusted: Boolean = false
+    private var currentPlaylistVersion: Int = 0
 
     /** Hazir bekleyen yeni liste. VIDEONUN ORTASINDA DEGIL, icerik sinirinda uygulanir. */
     private var pendingPlaylist: List<PlaylistBuilder.Entry>? = null
@@ -126,7 +131,7 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         // Yarim kalan oynatma da kayda gecsin (completed = false)
-        flushCurrentPlay(completed = false)
+        flushCurrentPlay(completed = false, bekleyerek = true)
         player?.release()
         player = null
         super.onDestroy()
@@ -156,11 +161,22 @@ class PlayerActivity : AppCompatActivity() {
         exo.addListener(object : Player.Listener {
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Onceki oge bitti -> oynatma kanitina yaz
-                flushCurrentPlay(completed = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+                /*
+                 * REPEAT de TAM OYNATMADIR.
+                 *
+                 * Listede TEK oge varsa ExoPlayer her tur icin AUTO degil REPEAT sebebini
+                 * bildirir. Sadece AUTO'yu saymak, tek reklamli bir otobuste her oynatmayi
+                 * "yarim kalmis" olarak kaydediyordu - yani o otobus fatura raporunda HIC
+                 * gorunmuyordu. Ikisi de dogal bitistir.
+                 */
+                val tamOynatildi = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                flushCurrentPlay(completed = tamOynatildi)
 
                 currentEntry = mediaItem?.localConfiguration?.tag as? PlaylistBuilder.Entry
                 currentStartedAt = clock.now()
+                currentClockTrusted = clock.trusted()
+                currentPlaylistVersion = config.playlistVersion
 
                 // Bekleyen liste varsa TAM BURADA uygula: icerik siniri,
                 // yani izleyici acisindan en az rahatsiz edici an.
@@ -179,7 +195,11 @@ class PlayerActivity : AppCompatActivity() {
                     if (it.mediaItemCount > 1) it.seekToNextMediaItem()
                     it.prepare()
                 }
-                refreshPlaylist(immediate = true)
+                // immediate=false ONEMLI: immediate=true listeyi 0. ogeden yeniden
+                // kurup az once yaptigimiz "sonraki ogeye gec" hamlesini GERI ALIR ve
+                // bozuk ogeye donerdi - sonsuz hata dongusu. Yeni liste bir sonraki
+                // icerik sinirinda devreye girsin.
+                refreshPlaylist(immediate = false)
             }
         })
 
@@ -257,28 +277,33 @@ class PlayerActivity : AppCompatActivity() {
         exo.play()
         currentEntry = entries.firstOrNull()
         currentStartedAt = clock.now()
+        currentClockTrusted = clock.trusted()
+        currentPlaylistVersion = config.playlistVersion
         Log.i(TAG, "liste uygulandi: ${entries.size} oge (${lastReason})")
         updateDiagnostics()
     }
 
-    private fun flushCurrentPlay(completed: Boolean) {
+    /** @param bekleyerek yeniden baslatma/kapanis oncesi: yazmanin diske inmesini bekle */
+    private fun flushCurrentPlay(completed: Boolean, bekleyerek: Boolean = false) {
         val entry = currentEntry ?: return
         val started = currentStartedAt
         if (started <= 0L) return
         val elapsed = (clock.now() - started).coerceAtLeast(0L)
+        val saatGuveni = currentClockTrusted
+        val listeSurumu = currentPlaylistVersion
         currentEntry = null
         currentStartedAt = 0L
 
+        // Tam oynatildiysa dosyanin gercek suresini yaz, yarim kaldiysa gecen sure
+        val sure = if (completed && entry.durationMs > 0) entry.durationMs else elapsed
+
         // logger.kaydet(): kendi kapsamindan yazar. lifecycleScope kullansaydik
         // onDestroy'daki son kayit hic yazilmazdi (kapsam o an iptal edilmis olur).
-        logger.kaydet(
-            itemId = entry.itemId,
-            sha256 = entry.sha256,
-            startedAt = started,
-            // Tam oynatildiysa dosyanin gercek suresini yaz, yarim kaldiysa gecen sure
-            durationMs = if (completed && entry.durationMs > 0) entry.durationMs else elapsed,
-            completed = completed
-        )
+        if (bekleyerek) {
+            logger.bekleyerekKaydet(entry.itemId, entry.sha256, started, sure, completed, saatGuveni, listeSurumu)
+        } else {
+            logger.kaydet(entry.itemId, entry.sha256, started, sure, completed, saatGuveni, listeSurumu)
+        }
     }
 
     /**
@@ -303,10 +328,27 @@ class PlayerActivity : AppCompatActivity() {
     private val watchdog = object : Runnable {
         override fun run() {
             checkStall()
+            yenidenDegerlendir()
             checkNightlyReboot()
             updateDiagnostics()
             handler.postDelayed(this, WATCHDOG_MS)
         }
+    }
+
+    /**
+     * Listeyi PERIYODIK olarak yeniden degerlendir.
+     *
+     * BU OLMADAN daypart ozelligi FIILEN CALISMIYORDU: liste yalnizca senkron veya
+     * hata aninda kuruluyordu. Otobus gun icinde senkron olmazsa 07:00-10:00 araligi
+     * icin tanimlanmis bir reklam aksama kadar donmeye devam ediyordu - ve daha kotusu,
+     * suresi dolan (validUntil) bir reklam bir sonraki senkrona kadar yayinda kaliyordu.
+     * Ikisi de dogrudan faturalanabilir hata.
+     *
+     * Pahali degil: iki kucuk veritabani sorgusu. Liste GERCEKTEN degismediyse
+     * refreshPlaylist zaten hicbir sey yapmaz (sameAsCurrent kontrolu).
+     */
+    private fun yenidenDegerlendir() {
+        refreshPlaylist(immediate = player?.mediaItemCount == 0)
     }
 
     private fun checkStall() {
@@ -335,6 +377,8 @@ class PlayerActivity : AppCompatActivity() {
             }
             stallCount >= STALL_REBOOT -> {
                 Log.e(TAG, "takilma gecmedi -> cihaz yeniden baslatiliyor")
+                // Kuyruktaki oynatma kaydi yeniden baslatmayla kaybolmasin
+                flushCurrentPlay(completed = false, bekleyerek = true)
                 // Sayac BootReceiver'da artiyor; burada artirmak mukerrer sayim olurdu.
                 config.lastError = "watchdog reboot"
                 if (!admin.reboot()) {
@@ -363,6 +407,7 @@ class PlayerActivity : AppCompatActivity() {
 
         config.lastRebootDay = today
         Log.i(TAG, "gece kontrollu yeniden baslatma")
+        flushCurrentPlay(completed = false, bekleyerek = true)
         admin.reboot()
     }
 

@@ -115,13 +115,24 @@ object ManifestParser {
     private fun parsePolicy(o: JSONObject?): Policy {
         val d = Policy()
         if (o == null) return d
+        /*
+         * DEGERLER SINIRLANIYOR.
+         *
+         * Bu alanlar sunucudan geliyor. OkHttp'de zaman asimi 0 demek "ZAMAN ASIMI YOK"
+         * demektir: bir yapilandirma hatasi (veya bozuk bir onbellek yaniti) on plan
+         * servisini sonsuza kadar askida birakir, cihaz bir daha senkron olmaz ve bunu
+         * kimse gormez. Alt sinirlar bu sinifi tamamen kapatiyor.
+         *
+         * staggerMaxMs de sinirli: asiri buyuk bir deger tum 3 dakikalik pencereyi
+         * beklemeyle gecirirdi.
+         */
         return Policy(
-            staggerMaxMs = o.optLong("staggerMaxMs", d.staggerMaxMs),
+            staggerMaxMs = o.optLong("staggerMaxMs", d.staggerMaxMs).coerceIn(0, 60_000),
             parallelChunks = o.optInt("parallelChunks", d.parallelChunks).coerceIn(1, 4),
-            connectTimeoutMs = o.optLong("connectTimeoutMs", d.connectTimeoutMs),
-            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs),
-            heartbeatEveryMs = o.optLong("heartbeatEveryMs", d.heartbeatEveryMs),
-            maxStalenessHours = o.optInt("maxStalenessHours", d.maxStalenessHours),
+            connectTimeoutMs = o.optLong("connectTimeoutMs", d.connectTimeoutMs).coerceIn(1_000, 60_000),
+            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs).coerceIn(1_000, 120_000),
+            heartbeatEveryMs = o.optLong("heartbeatEveryMs", d.heartbeatEveryMs).coerceAtLeast(60_000),
+            maxStalenessHours = o.optInt("maxStalenessHours", d.maxStalenessHours).coerceIn(1, 24 * 30),
             cellularAllowed = o.optBoolean("cellularAllowed", d.cellularAllowed)
         )
     }

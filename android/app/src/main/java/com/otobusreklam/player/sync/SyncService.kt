@@ -27,6 +27,7 @@ import com.otobusreklam.player.net.Http
 import com.otobusreklam.player.store.FileStore
 import com.otobusreklam.player.telemetry.Telemetry
 import com.otobusreklam.player.update.Updater
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -53,6 +54,8 @@ class SyncService : Service() {
 
     @Volatile private var network: Network? = null
     @Volatile private var running = false
+    /** stopSelf(startId): araya giren ikinci bir WiFi olayinin baslattigi senkronu oldurmemek icin. */
+    @Volatile private var sonStartId = -1
 
     private lateinit var config: Config
     private lateinit var store: FileStore
@@ -74,6 +77,7 @@ class SyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, notification())
+        sonStartId = startId
 
         when (intent?.action) {
             ACTION_STOP -> {
@@ -108,13 +112,26 @@ class SyncService : Service() {
         val newJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 runSync()
+            } catch (e: CancellationException) {
+                /*
+                 * IPTAL BIR HATA DEGILDIR - PENCERENIN NORMAL SONUDUR.
+                 *
+                 * Otobus noktadan ayrilinca WiFi kopar ve senkron iptal edilir; bu her
+                 * gun, her otobuste olan beklenen durum. Onceden bu da lastError'a
+                 * yaziliyordu: panelde her cihaz surekli "hata" gosteriyor ve GERCEK
+                 * hatalar bu gurultunun icinde kayboluyordu.
+                 */
+                Log.i(TAG, "senkron iptal edildi (pencere bitti) - ilerleme korundu")
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "senkron hatasi", e)
                 config.lastError = "${e.javaClass.simpleName}: ${e.message}"
             } finally {
                 running = false
                 stopForegroundCompat()
-                stopSelf()
+                // startId ile: bu cagriyi baslatan istek icin duruyoruz. Araya giren
+                // yeni bir WiFi olayi varsa onun baslattigi senkron yasamaya devam eder.
+                stopSelf(sonStartId)
             }
         }
         job = newJob
@@ -184,7 +201,9 @@ class SyncService : Service() {
         db.playLog().purgeOlderThan(clock.now() - 30L * 24 * 3600 * 1000)
 
         config.lastSyncAt = clock.now()
-        config.lastError = ""
+        // Indirme sirasinda anlasilir bir sorun olduysa (disk dolu, bozuk manifest)
+        // onu KORU; yoksa temizle. Aksi halde tespit edilebilir tek ipucu kayboluyordu.
+        config.lastError = downloader.sonHata ?: ""
         Log.i(TAG, "senkron tamam, oturumda inen: ${downloader.sessionBytes / 1024} KB")
     }
 
@@ -324,10 +343,25 @@ class SyncService : Service() {
 
         for (id in SyncPlan.order(needs, appUpdate = update != null, appCritical = update?.critical == true)) {
             if (!stillRunning()) return
-            if (id == SyncPlan.APP_UPDATE) {
-                update?.let { applyUpdate(it, manifest, client) }
-            } else {
-                byId[id]?.let { fetch(it, manifest, client) }
+            try {
+                if (id == SyncPlan.APP_UPDATE) {
+                    update?.let { applyUpdate(it, manifest, client) }
+                } else {
+                    byId[id]?.let { fetch(it, manifest, client) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                /*
+                 * TEK BIR OGENIN HATASI PENCEREYI BITIRMEZ.
+                 *
+                 * Onceden buradan kacan bir istisna (veritabani kilidi, disk hatasi)
+                 * tum senkronu iptal ediyordu: sonraki icerikler hic denenmiyor,
+                 * telemetri gonderilmiyor ve DISK TEMIZLIGI hic calismiyordu - yani
+                 * disk dolmasi kendi kendini besleyen bir kisir donguye giriyordu.
+                 */
+                Log.e(TAG, "oge indirilemedi: $id", e)
+                config.lastError = "indirme hatasi ($id): ${e.message}"
             }
         }
     }

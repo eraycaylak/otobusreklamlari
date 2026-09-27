@@ -56,7 +56,17 @@ class Downloader(
 
     val sessionBytes: Long get() = indirilen.get()
 
-    fun resetSessionStats() { indirilen.set(0L) }
+    fun resetSessionStats() { indirilen.set(0L); sonHata = null }
+
+    /**
+     * Son indirme hatasinin ANLASILIR aciklamasi.
+     *
+     * Onceden her basarisizlik ayni Log.i satirina iniyordu ve panele HIC yansimiyordu:
+     * disk dolmus, sunucu Range desteklemiyor, manifest bozuk - hepsi sahada ayni
+     * sekilde goruluyordu, yani hicbir sekilde. SyncService bunu lastError'a tasiyor.
+     */
+    @Volatile var sonHata: String? = null
+        private set
 
     suspend fun ensure(
         sha: String,
@@ -70,6 +80,24 @@ class Downloader(
     ): Result = withContext(Dispatchers.IO) {
 
         val target = store.contentFile(sha, remotePath)
+
+        /*
+         * PARCA LISTESI DOSYAYI TAM KAPSIYOR MU?
+         *
+         * Kapsamiyorsa (sunucu hatasi, kirpilmis manifest) tum parcalar "indi" olur,
+         * tam dosya hash'i TUTMAZ, dosya bastan indirilir - ve bu SONSUZA KADAR
+         * tekrarlanir. Her pencerede tum bant genisligi ayni dosyaya harcanir ve
+         * hicbir icerik guncellenemez. Bir kez basta kontrol etmek bunu kapatiyor.
+         */
+        val kapsam = chunks.sumOf { it.len.toLong() }
+        if (chunks.isEmpty() || kapsam != size) {
+            sonHata = "manifest parca listesi bozuk: ${chunks.size} parca $kapsam bayt, beklenen $size"
+            Log.e(TAG, sonHata!!)
+            db.contents().upsert(
+                ContentEntity(sha, remotePath, size, ContentState.BAD, System.currentTimeMillis())
+            )
+            return@withContext Result.FAILED
+        }
 
         val known = db.contents().get(sha)
 
@@ -103,11 +131,27 @@ class Downloader(
             ContentEntity(sha, remotePath, size, ContentState.PARTIAL, System.currentTimeMillis())
         )
 
+        /*
+         * DISK ON KONTROLU.
+         *
+         * Disk doluyken indirmeye baslamak 3 dakikalik pencereyi bosa harcar: her parca
+         * yazma hatasi verir, hepsi ayni sessiz log satirina duser ve cihaz her ziyarette
+         * bunu tekrarlar. Onceden bu durum kalici ve GORUNMEZ bir kilitlenmeydi.
+         */
+        val bosAlan = store.freeBytes()
+        val gereken = size - part0Uzunlugu(sha)
+        if (bosAlan in 0 until (gereken + DISK_MARJI)) {
+            sonHata = "disk dolu: ${bosAlan / 1_000_000} MB bos, ${gereken / 1_000_000} MB gerekiyor"
+            Log.e(TAG, sonHata!!)
+            return@withContext Result.FAILED
+        }
+
         val part = store.partFile(sha)
         val raf = try {
             RandomAccessFile(part, "rw").apply { if (length() != size) setLength(size) }
         } catch (e: Exception) {
-            Log.e(TAG, "parca dosyasi acilamadi: ${e.message}")
+            sonHata = "parca dosyasi acilamadi: ${e.message}"
+            Log.e(TAG, sonHata!!)
             return@withContext Result.FAILED
         }
 
@@ -143,6 +187,11 @@ class Downloader(
                                 // Pencere bitti / ag koptu. Bu NORMAL bir son.
                                 // Ilerleme diskte, bir sonraki ziyarette devam edilir.
                                 Log.i(TAG, "parca ${chunk.idx} yarim kaldi: ${e.message}")
+                                // Disk hatasi NORMAL degil: ayirt edilebilir olmali
+                                val m = e.message.orEmpty()
+                                if (m.contains("No space", true) || m.contains("ENOSPC", true)) {
+                                    sonHata = "disk dolu (yazma hatasi): $m"
+                                }
                             }
                         }
                     }
@@ -249,5 +298,13 @@ class Downloader(
         return out
     }
 
-    private companion object { const val TAG = "Downloader" }
+    /** Yarim dosyanin mevcut uzunlugu - ne kadar daha alan gerektigini hesaplamak icin. */
+    private fun part0Uzunlugu(sha: String): Long =
+        runCatching { store.partFile(sha).length() }.getOrDefault(0L)
+
+    private companion object {
+        const val TAG = "Downloader"
+        /** Dosya boyutunun ustune biraktigimiz emniyet payi (veritabani, loglar, gecici dosyalar). */
+        const val DISK_MARJI = 50L * 1024 * 1024
+    }
 }

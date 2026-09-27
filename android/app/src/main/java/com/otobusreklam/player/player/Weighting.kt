@@ -12,15 +12,26 @@ package com.otobusreklam.player.player
  */
 object Weighting {
 
+    /**
+     * Agirlik ust siniri.
+     *
+     * Panelde yanlislikla girilen bir deger (ornegin 10000) listeyi o kadar sisirir ki
+     * bellek tukenir ve kapasite hesabi Int tasmasina girip cokebilir. Otobus ekraninda
+     * 20'den fazla tekrarin pratik bir anlami da yok.
+     */
+    const val MAX_WEIGHT = 20
+
     fun <T> interleave(items: List<T>, weightOf: (T) -> Int): List<T> {
         if (items.isEmpty()) return emptyList()
 
-        val maxWeight = items.maxOf { weightOf(it).coerceAtLeast(1) }
+        fun agirlik(item: T) = weightOf(item).coerceIn(1, MAX_WEIGHT)
+
+        val maxWeight = items.maxOf(::agirlik)
         val out = ArrayList<T>(items.size * maxWeight)
 
         for (pass in 1..maxWeight) {
             for (item in items) {
-                if (weightOf(item).coerceAtLeast(1) >= pass) out += item
+                if (agirlik(item) >= pass) out += item
             }
         }
         return out
