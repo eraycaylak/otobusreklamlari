@@ -35,8 +35,32 @@ media3-common            = { module = "androidx.media3:media3-common", version.r
 okhttp                   = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 coroutines-android       = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 
+# ---------------------------------------------------------------------------
 # Ed25519: tum API seviyelerinde ayni sekilde calisir.
-# java.security "Ed25519" saglayicisi sadece API 33+ te var; bu kutuphane API 24'te de calisir.
+# java.security "Ed25519" saglayicisi sadece API 33+ te var; bu kutuphane API 24'te de
+# calisir ve tum icerik butunlugu modeli buna dayaniyor.
+#
+# BILINCLI KARAR - BAKIMSIZ BIR KUTUPHANE KULLANIYORUZ:
+# net.i2p.crypto:eddsa 0.3.0 (2020) ARSIVLENMIS bir projedir. Bunu bilerek tutuyoruz:
+#   - Arsivlenmis olmak ACIKLI olmak DEGILDIR. 0.3.0 icin bilinen bir CVE yok;
+#     Ed25519 sabit bir spesifikasyon (RFC 8032) ve bu uygulama genis kullanilmis.
+#   - Alternatiflerin maliyeti gercek: BouncyCastle APK'ya megabaytlar ekler
+#     (3 dakikalik pencereye sigmak icin kurulmus bir sistemde APK boyutu bedava
+#     degil), Conscrypt NDK bagimliligi getirir.
+#   - Yalnizca DOGRULAMA yapiyoruz (imzalama sunucuda, Node'un kendi crypto'su ile).
+#     Yani gizli anahtar hic bu kutuphaneye girmiyor; yan kanal yuzeyi yok.
+#
+# DEGISTIRME TETIKLEYICILERI (biri olursa gecin, beklemeyin):
+#   1. 0.3.0 icin bir CVE yayinlanirsa
+#   2. minSdk 33'e cikarsa -> java.security "Ed25519" ile kutuphane TAMAMEN kalkar
+#   3. Manifest imza semasi degisirse (o zaman zaten dokunuluyor)
+#
+# GECIS GUVENLI: SignatureVerifier'in tek girisi `open()` ve sunucunun urettigi
+# GERCEK bir zarf + gercek anahtarla test edilmis (SignatureVerifierTest: tek bayt
+# degisimi, 63 baytlik imza, yanlis anahtar cifti). Kutuphaneyi degistiren kisi bu
+# testleri kosturarak hem "sahte kabul edilmiyor" hem "gercek reddedilmiyor"
+# guvencesini ANINDA alir. Degistirme riskini bu testler tasiyor.
+# ---------------------------------------------------------------------------
 eddsa                    = { module = "net.i2p.crypto:eddsa", version.ref = "eddsa" }
 
 junit                    = { module = "junit:junit", version.ref = "junit" }

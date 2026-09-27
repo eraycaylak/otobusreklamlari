@@ -22,7 +22,7 @@ docs/              Belgeler
 # 1) Merkez sunucu
 cd sunucu && npm install && npm run anahtar-uret
 ADMIN_TOKEN="uzun-rastgele-bir-dize" npm start     # panel: http://localhost:8080
-npm test                                            # 73 test (uçtan uca + güvenlik + fatura/güncelleme + transcode)
+npm test                                            # 87 test (uçtan uca + güvenlik + fatura/güncelleme + panel + transcode)
 
 # 2) Android
 cd android
@@ -115,7 +115,7 @@ Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda gir
 
 | Ne | Nerede | Kapsam |
 |---|---|---|
-| **Sunucu — 73 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı, fatura raporu kuralları (yalnızca tamamlanmış oynatmalar, şüpheli saat), APK yayım kanalı uçtan uca, rollout sözleşmesinin sunucu tarafı, girdi doğrulaması (`__proto__`, tarih biçimi, saklama süreleri) |
+| **Sunucu — 87 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı, fatura raporu kuralları (yalnızca tamamlanmış oynatmalar, şüpheli saat), APK yayım kanalı uçtan uca, rollout sözleşmesinin sunucu tarafı, girdi doğrulaması (`__proto__`, tarih biçimi, saklama süreleri), **panel kuralları** (cihazdan gelen metnin XSS kaçışı — kaçış düşerse ele geçirilmiş bir otobüs admin token'ını çalar, kampanya durumu, video seçimini sıfırlamama) |
 | **Android — 129 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı, **gelen zamanın kabul kuralı** — geriye alma ve imzasız kaynakla mandal zehirleme dahil), indirme önceliği (**süresi bitmiş içerik en sona** — yoksa pencere asla oynatılamayacak dosyaya giderdi), **sunucuyla kademeli yayım hash uyumu**, **manifest protokol sözleşmesi** (sunucunun ürettiği gerçek imzalı manifest üzerinde: her alan, chunk bitişikliği, policy alt/üst sınır kırpmaları), **imza doğrulama** (tek bayt değişimi, 63 baytlık imza, yanlış anahtar çifti), **indirme kabul kuralları** (Range'i yok sayan 200, yanlış aralık, parça boyutu OOM sınırı) |
 | **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
 

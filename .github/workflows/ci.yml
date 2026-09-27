@@ -22,9 +22,44 @@ jobs:
       - name: Bagimliliklar
         working-directory: sunucu
         run: npm ci --no-audit --no-fund
-      - name: "Testler (uctan uca, guvenlik ve transcode)"
+      # -------------------------------------------------------------------
+      # SOZDIZIMI DENETIMI - TESTIN DOKUNMADIGI DOSYALAR ICIN.
+      #
+      # Sunucu JS'i icin bir linter YOK (bilincli: bu projenin kurali "ekstra
+      # bagimlilik yok" ve eslint ~100 paket getirir). Ama en azindan HER dosyanin
+      # ayristirilabildigini dogrulamak bedava: panel/kurallar.js, betikler ve
+      # testlerin hic import etmedigi dosyalar aksi halde bozuk halde push
+      # edilebilir ve bunu ancak sunucu acilmazken ogrenirsiniz.
+      # -------------------------------------------------------------------
+      - name: JS sozdizimi
+        working-directory: sunucu
+        run: |
+          bulunan=0
+          while IFS= read -r f; do
+            node --check "$f" || exit 1
+            bulunan=$((bulunan+1))
+          done < <(find src scripts test -name '*.js' -not -path '*/node_modules/*')
+          echo "$bulunan JS dosyasi ayristirildi"
+          [ "$bulunan" -gt 10 ] || { echo "beklenenden az dosya tarandi - tarayici bozuk mu?"; exit 1; }
+
+      - name: "Testler (uctan uca, guvenlik, fatura, panel, transcode)"
         working-directory: sunucu
         run: npm test
+
+      # -------------------------------------------------------------------
+      # BAGIMLILIK DENETIMI - ARTIK KAPALI DEGIL.
+      #
+      # `npm ci --no-audit` denetimi KURULUM sirasinda kapatiyor (dogru: kurulum
+      # hizli olmali) ama denetimin HIC yapilmamasi ayri bir sey. Tek calisma
+      # zamani bagimliligi var (express), yani denetim saniyeler suruyor ve
+      # yuksek/kritik bir aciklik cikarsa BILMEK gerekir.
+      #
+      # Bloklayici: moderate ve altini gecirir, high/critical'da durur. Aksi halde
+      # "gorunen ama kimsenin bakmadigi" bir rapor olurdu.
+      # -------------------------------------------------------------------
+      - name: Bagimlilik acikliklari
+        working-directory: sunucu
+        run: npm audit --audit-level=high
 
   android:
     name: Android derleme ve birim testleri

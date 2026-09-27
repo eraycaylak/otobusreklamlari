@@ -1,27 +1,18 @@
 /* eslint-env browser */
 const $ = (id) => document.getElementById(id)
 
-/**
- * HTML kacisi.
+/*
+ * SAF KURALLAR kurallar.js'ten geliyor - TEK KOPYA.
  *
- * NEDEN ZORUNLU: bu paneldeki verilerin bir kismi CIHAZDAN geliyor (heartbeat'teki
- * lastError gibi), bir kismi serbest metin (kampanya basligi, reklamveren adi,
- * yuklenen dosya adi). Kacis yapilmadan innerHTML'e basilirsa, ele gecirilmis tek
- * bir otobus cihazi heartbeat'e <img src=x onerror=...> yazarak panelde kod
- * calistirabilir ve localStorage'daki ADMIN TOKENINI calabilir.
+ * esc/kampanyaDurumu/isoTarih/itemImzasi burada TEKRAR tanimlanmiyor: panelde test
+ * edilebilir olan katman o dosya (bkz. sunucu/test/panel.test.js) ve ikinci bir kopya
+ * tutmak, testin gercekte kullanilan kodu dogrulamamasi anlamina gelirdi.
  *
- * Cihaz id / grup gibi alanlar sunucuda zaten dogrulaniyor ama burada ayrim
- * yapmiyoruz: DISARIDAN gelen her sey kacisa girer.
+ * `esc` ozellikle GUVENLIK KRITIK: heartbeat'teki lastError/playlistReason CIHAZDAN
+ * geliyor. Kacis dustugunde ele gecirilmis tek bir otobus, panelde kod calistirip
+ * localStorage'daki ADMIN TOKENINI - yani filoya APK yayimlama yetkisini - calabilir.
  */
-function esc (value) {
-  if (value === null || value === undefined) return ''
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+const { esc, kampanyaDurumu, isoTarih, itemImzasi } = window.PanelKurallari
 let TOKEN = localStorage.getItem('adminToken') || ''
 $('token').value = TOKEN
 
@@ -150,12 +141,12 @@ function formOdakta () {
 }
 
 /** Icerik listesini yalnizca DEGISTIYSE yeniden kur ve secimi KORU. */
-let itemImzasi = ''
+let sonImza = ''
 function icerikSecimiGuncelle (items) {
-  const imza = items.map((i) => i.sha256).join(',')
+  const imza = itemImzasi(items)
   const sec = $('cItem')
   if (!sec) return
-  if (imza === itemImzasi) return
+  if (imza === sonImza) return
   const onceki = sec.value
   sec.innerHTML = items.map((i) => {
     const sure = i.durationBilinmiyor
@@ -163,21 +154,8 @@ function icerikSecimiGuncelle (items) {
       : `${Math.round(i.durationMs / 1000)} sn`
     return `<option value="${esc(i.sha256)}">${esc(i.originalName)} — ${(i.size / 1e6).toFixed(1)} MB / ${esc(sure)}</option>`
   }).join('')
-  itemImzasi = imza
+  sonImza = imza
   if (onceki && items.some((i) => i.sha256 === onceki)) sec.value = onceki
-}
-
-/** Kampanyanin hesaplanmis durumu: operator "neden yayinda degil?" diye sormasin. */
-function kampanyaDurumu (c) {
-  const now = Date.now()
-  if (!c.enabled) return { metin: 'kapalı', renk: 'var(--dim)' }
-  if (c.evergreen) return { metin: 'evergreen', renk: 'var(--ok)' }
-  const f = c.validFrom ? Date.parse(c.validFrom) : null
-  const u = c.validUntil ? Date.parse(c.validUntil) : null
-  if (f && u && f >= u) return { metin: 'TERS ARALIK', renk: 'var(--bad)' }
-  if (u && u < now) return { metin: 'süresi geçmiş', renk: 'var(--bad)' }
-  if (f && f > now) return { metin: 'bekliyor', renk: 'var(--warn)' }
-  return { metin: 'aktif', renk: 'var(--ok)' }
 }
 
 async function refresh () {
@@ -378,14 +356,6 @@ async function upload () {
     ilerleme(null, '')
     kilit(false)
   }
-}
-
-/** datetime-local -> ISO. Bozuk deger SESSIZ gecmesin. */
-function isoTarih (ad, v) {
-  if (!v) return null
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) throw new Error(`${ad} tarihi okunamadı: "${v}"`)
-  return d.toISOString()
 }
 
 async function addCampaign () {

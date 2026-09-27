@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (73 test — Range ile devam eden indirme senaryosu, fatura kuralları ve güvenlik testleri dahil):
+Testleri çalıştırın (87 test — Range ile devam eden indirme senaryosu, fatura kuralları ve güvenlik testleri dahil):
 
 ```bash
 npm test
@@ -134,6 +134,7 @@ Aynalama her saat başı (dakika 7) çalışır ve şu dört şeyi garanti eder:
 | **`--partial-dir`** | `--partial` yarım dosyayı **nihai adıyla** bırakır ve nginx onu tam dosya gibi servis eder. `--append-verify` de kullanılmıyor: o `--inplace`'i ima eder, yani bu önlemi sessizce iptal ederdi. |
 | **`--max-delete=50`** | Merkezde `DATA_DIR` değişirse veya disk takılmazsa uzak `content/` **boş** görünür ve düz `--delete` noktanın tüm aynasını siler. Sigorta devreye girerse ayna korunur ve sebep loga yazılır. Gerçekten gerekiyorsa: `MAX_SILME=100000 /opt/reklam/ayna.sh` |
 | **`flock`** | Yavaş bir PtMP linkinde aynalama bir saatten uzun sürebilir; iki rsync aynı dosyalara yazarsa tam da önlemeye çalıştığımız bozulmayı üretir. |
+| **Artımlı denetim** | Bütünlük denetimi eskiden **her saat tüm aynayı** baştan hash'liyordu: 20 GB'lık bir aynada bu, diski ve CPU'yu dakikalarca doyurur ve tam o anda noktaya giren otobüs dosyaları yavaş çeker — kutunun tek işi o pencerede hızlı olmak. Artık değişmeyen dosya yeniden hash'lenmiyor (`ad+boyut+mtime` bir durum dosyasında), **günde bir kez** (varsayılan 03:00, otobüsler yokken) tam denetim yapılıyor ve hash `nice -n 19 ionice -c3` ile koşuyor. Zorlamak için: `TAM_DENETIM_ZORLA=1 /opt/reklam/ayna.sh`, saati değiştirmek için `TAM_DENETIM_SAATI=4`. |
 
 > **Manifest önbelleği.** Merkez manifeste bilinçli olarak `Cache-Control: no-store`
 > koyuyor (**cihaz** onu önbelleklemesin, bitiş tarihleri taze olsun). nginx de

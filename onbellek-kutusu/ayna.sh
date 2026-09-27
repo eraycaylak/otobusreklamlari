@@ -101,23 +101,78 @@ AYNALA app || { echo "[$(date -Is)] HATA: APK aynalanamadi (rsync $?)"; HATA=1; 
 #
 # Bozuk dosyayi siliyoruz: bir sonraki aynalama onu yeniden getirir.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# DENETIM ARTIK HER SAAT TUM AYNAYI YENIDEN HASH'LEMIYOR.
+#
+# Eski hali her turda content/ + app/ altindaki HER dosyayi bastan sha256'liyordu.
+# Uc sorun:
+#   1. Otobuslerin penceresiyle CAKISIYOR. 20 GB'lik bir aynada bu, diski ve CPU'yu
+#      dakikalarca doyurur; tam o anda noktaya giren otobus dosyalari YAVAS ceker ve
+#      3 dakikasinin bir kismini kaybeder. Kutunun tek isi o pencerede hizli olmak.
+#   2. KILIDI TUTUYOR. Denetim flock altinda kosuyor, yani bir sonraki aynalama turu
+#      da bekliyor.
+#   3. nice/ionice YOK: islem, nginx ile ayni onceliktre yarisiyor.
+#
+# Yeni davranis: DEGISMEYEN dosya yeniden hash'lenmez. Dogrulanmis her dosyanin
+# ad+boyut+mtime'i bir durum dosyasinda tutuluyor; tur yalnizca YENI veya DEGISMIS
+# dosyalari hash'liyor. Ayrica gunde bir kez (TAM_DENETIM_SAATI, varsayilan 03:00 -
+# otobusler yokken) tam denetim yapiliyor: eMMC bozulmasi dosyayi degistirmeden
+# icerigini bozabilir, yani artimli denetim tek basina yetmez.
+#
+# nice + ionice: denetim her zaman nginx'e yol verir.
+# ---------------------------------------------------------------------------
+DURUM="${DURUM:-$YEREL_DIZIN/.dogrulandi}"
+TAM_DENETIM_SAATI="${TAM_DENETIM_SAATI:-3}"
+SAAT=$(date +%-H)
+TAM_DENETIM=0
+[[ "$SAAT" == "$TAM_DENETIM_SAATI" ]] && TAM_DENETIM=1
+[[ "${TAM_DENETIM_ZORLA:-0}" == "1" ]] && TAM_DENETIM=1
+
+NICE=()
+command -v nice >/dev/null 2>&1 && NICE=(nice -n 19)
+command -v ionice >/dev/null 2>&1 && NICE+=(ionice -c3)
+
 BOZUK=0
+DENETLENEN=0
+ATLANAN=0
 if command -v sha256sum >/dev/null 2>&1; then
+  touch "$DURUM" 2>/dev/null || true
+  YENI_DURUM=$(mktemp) || YENI_DURUM="$DURUM.yeni"
+  if [[ $TAM_DENETIM -eq 1 ]]; then
+    echo "[$(date -Is)] TAM butunluk denetimi (saat $SAAT) - tum dosyalar yeniden hash'lenecek"
+  fi
   while IFS= read -r dosya; do
     ad=$(basename "$dosya")
     beklenen="${ad%%.*}"
     # 64 onaltilik karakter degilse icerik adresli degil (orn. known-good.apk)
     [[ "$beklenen" =~ ^[0-9a-f]{64}$ ]] || continue
-    gercek=$(sha256sum "$dosya" | cut -d' ' -f1)
+
+    # Parmak izi: ad + boyut + mtime. Degismediyse ve tam denetim turu degilse atla.
+    if imza=$(stat -c '%n|%s|%Y' "$dosya" 2>/dev/null); then :; else continue; fi
+    if [[ $TAM_DENETIM -eq 0 ]] && grep -qxF "$imza" "$DURUM" 2>/dev/null; then
+      printf '%s\n' "$imza" >> "$YENI_DURUM"
+      ATLANAN=$((ATLANAN+1))
+      continue
+    fi
+
+    gercek=$("${NICE[@]}" sha256sum "$dosya" | cut -d' ' -f1)
+    DENETLENEN=$((DENETLENEN+1))
     if [[ "$gercek" != "$beklenen" ]]; then
       echo "[$(date -Is)] BOZUK DOSYA SILINIYOR: $ad (hash tutmadi)"
       rm -f "$dosya"
       BOZUK=$((BOZUK+1))
+    else
+      printf '%s\n' "$imza" >> "$YENI_DURUM"
     fi
     # .rsync-partial altindaki yarim dosyalar HENUZ tam degil: denetime girmemeli
   done < <(find "$YEREL_DIZIN/content" "$YEREL_DIZIN/app" \
                 -type d -name '.rsync-partial' -prune -o \
                 -type f ! -name '.*' -print 2>/dev/null)
+  # Durum dosyasi ATOMIK guncellenir: yarim bir liste, saglam dosyalari "hic
+  # dogrulanmamis" gosterip bir sonraki turda gereksiz tam hash'e yol acardi.
+  mv -f "$YENI_DURUM" "$DURUM" 2>/dev/null || true
+  chmod 600 "$DURUM" 2>/dev/null || true
+  echo "[$(date -Is)] butunluk: $DENETLENEN hash'lendi, $ATLANAN degismedigi icin atlandi"
 else
   echo "[$(date -Is)] UYARI: sha256sum yok - butunluk denetimi atlandi"
 fi
