@@ -62,7 +62,6 @@ class PlayerActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var lastPosition = -1L
     private var stallCount = 0
-    private var lastRebootDay = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -243,16 +242,16 @@ class PlayerActivity : AppCompatActivity() {
         currentEntry = null
         currentStartedAt = 0L
 
-        lifecycleScope.launch {
-            logger.record(
-                itemId = entry.itemId,
-                sha256 = entry.sha256,
-                startedAt = started,
-                // Tam oynatildiysa dosyanin gercek suresini yaz, yarim kaldiysa gecen sure
-                durationMs = if (completed && entry.durationMs > 0) entry.durationMs else elapsed,
-                completed = completed
-            )
-        }
+        // logger.kaydet(): kendi kapsamindan yazar. lifecycleScope kullansaydik
+        // onDestroy'daki son kayit hic yazilmazdi (kapsam o an iptal edilmis olur).
+        logger.kaydet(
+            itemId = entry.itemId,
+            sha256 = entry.sha256,
+            startedAt = started,
+            // Tam oynatildiysa dosyanin gercek suresini yaz, yarim kaldiysa gecen sure
+            durationMs = if (completed && entry.durationMs > 0) entry.durationMs else elapsed,
+            completed = completed
+        )
     }
 
     /**
@@ -329,11 +328,13 @@ class PlayerActivity : AppCompatActivity() {
         if (!clock.trusted()) return
         val local = Instant.ofEpochMilli(clock.now()).atZone(ZoneId.systemDefault())
         val today = local.toLocalDate().toString()
-        if (today == lastRebootDay) return
+        // KALICI kontrol: cihaz yeniden baslayip hala pencere icindeyken
+        // tekrar yeniden baslatmasin (yeniden baslatma dongusu).
+        if (today == config.lastRebootDay) return
         if (local.hour != REBOOT_HOUR) return
         if (local.minute !in REBOOT_MINUTE_FROM..REBOOT_MINUTE_TO) return
 
-        lastRebootDay = today
+        config.lastRebootDay = today
         Log.i(TAG, "gece kontrollu yeniden baslatma")
         admin.reboot()
     }

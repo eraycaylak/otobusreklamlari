@@ -84,6 +84,7 @@ jobs:
           path: |
             android/app/build/reports/tests/
             android/app/build/reports/lint-results-debug.html
+            android/app/schemas/
           if-no-files-found: ignore
 
       - name: APK'yi yukle

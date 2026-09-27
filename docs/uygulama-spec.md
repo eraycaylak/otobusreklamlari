@@ -168,11 +168,17 @@ verimi düşürür.
 files/
 ├── content/<sha>.mp4        ← YALNIZCA doğrulanmış dosyalar
 ├── tmp/<sha>.part           ← yarım inen (parça durumu Room'da)
-├── manifest/current.json    ← oynatıcının okuduğu
-├── manifest/previous.json   ← geri dönüş
+├── manifest/current.json    ← son doğrulanmış İMZALI ZARF (teşhis/kanıt)
+├── manifest/previous.json   ← bir önceki (neyin değiştiğini görmek için)
 ├── app/known-good.apk       ← çalıştığı kanıtlanmış sürüm (temizlikte korunur)
 └── reklam.db                ← Room (items, contents, chunks, play_log)
 ```
+
+> **Oynatma listesinin kaynağı Room veritabanıdır, bu dosya değil.** `current.json`
+> sunucudan gelen imzalı zarfın birebir kopyasıdır ve iki işe yarar: teknisyen cihazı
+> alıp "bu cihaz hangi listeye inanıyordu?" sorusunu cevaplayabilir, ve dosyanın imzası
+> **çevrimdışı yeniden doğrulanabilir**. Özet bir JSON üretilmediği için elle JSON
+> kaçışı yazma ihtiyacı (ve o hata sınıfı) hiç doğmuyor.
 
 ---
 

@@ -22,6 +22,7 @@ import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Parcali, devam ettirilebilir indirme motoru.
@@ -44,11 +45,18 @@ class Downloader(
 
     enum class Result { READY, PARTIAL, FAILED }
 
-    /** Bu senkron oturumunda inen toplam bayt - heartbeat ve teshis icin. */
-    @Volatile var sessionBytes: Long = 0L
-        private set
+    /**
+     * Bu senkron oturumunda inen toplam bayt - heartbeat ve teshis icin.
+     *
+     * AtomicLong: parcalar paralel indigi icin `sessionBytes += len` seklinde bir
+     * oku-degistir-yaz islemi sayim kaybederdi. @Volatile bunu COZMEZ, sadece
+     * gorunurlugu garanti eder.
+     */
+    private val indirilen = AtomicLong(0L)
 
-    fun resetSessionStats() { sessionBytes = 0L }
+    val sessionBytes: Long get() = indirilen.get()
+
+    fun resetSessionStats() { indirilen.set(0L) }
 
     suspend fun ensure(
         sha: String,
@@ -71,7 +79,13 @@ class Downloader(
             // Yeniden indirmek bunu duzeltmez; yeni bir kodlama yuklenip sha degisene
             // kadar bu icerik donguye girmemeli. Aksi halde her senkronda dirilir.
             if (known?.state != ContentState.BAD) {
-                db.contents().setState(sha, ContentState.READY, System.currentTimeMillis())
+                // upsert (setState degil): setState bir UPDATE'tir ve satir yoksa
+                // sessizce 0 satir gunceller. O durumda dosya diskte hazir olur ama
+                // contents tablosunda READY satiri olmadigi icin PlaylistBuilder
+                // icerigi HIC OYNATMAZ. Satirin varligina guvenmek yerine yaziyoruz.
+                db.contents().upsert(
+                    ContentEntity(sha, remotePath, size, ContentState.READY, System.currentTimeMillis())
+                )
                 return@withContext Result.READY
             }
             return@withContext Result.FAILED
@@ -121,7 +135,7 @@ class Downloader(
                             try {
                                 if (fetchChunk(url, chunk, chunks.size, raf, client)) {
                                     db.chunks().markDone(sha, chunk.idx)
-                                    sessionBytes += chunk.len
+                                    indirilen.addAndGet(chunk.len.toLong())
                                 }
                             } catch (e: CancellationException) {
                                 throw e
@@ -203,7 +217,21 @@ class Downloader(
 
             // Mutlak konumlu yazma: FileChannel.write(buffer, position) kanal konumunu
             // degistirmez, bu yuzden farkli offset'lere paralel yazmak guvenlidir.
-            raf.channel.write(ByteBuffer.wrap(bytes), chunk.offset)
+            //
+            // DIKKAT: write() TAM yazmayi GARANTI ETMEZ; sozlesmeye gore daha az bayt
+            // yazabilir. Tek cagri yapsaydik parca "indi" isaretlenirken dosyada DELIK
+            // kalirdi; tam dosya hash'i bunu yakalar ama bedeli dosyanin bastan
+            // indirilmesidir - ve 3 dakikalik pencerede bu cok pahali.
+            val buf = ByteBuffer.wrap(bytes)
+            var yazilan = 0
+            while (buf.hasRemaining()) {
+                val n = raf.channel.write(buf, chunk.offset + yazilan)
+                if (n <= 0) {
+                    Log.w(TAG, "parca ${chunk.idx} diske yazilamadi (yazilan=$yazilan/${chunk.len})")
+                    return false
+                }
+                yazilan += n
+            }
             // Her parcadan sonra diske zorla: ani guc kesintisinde ilerleme kaybolmasin.
             raf.channel.force(false)
             return true

@@ -78,6 +78,21 @@ class Config(context: Context) {
         get() = prefs.getLong(K_LAST_PROOF, 0L)
         set(v) = prefs.edit().putLong(K_LAST_PROOF, v).apply()
 
+    /**
+     * En son gece yeniden baslatmasinin yapildigi gun (yyyy-MM-dd).
+     *
+     * KALICI olmak ZORUNDA: bellekte tutulsaydi cihaz yeniden baslar, acilis ~1 dakika
+     * surer ve oynatici hala 03:25-03:35 penceresindeyken tekrar yeniden baslatirdi.
+     * Sonuc: pencere kapanana kadar suren bir yeniden baslatma dongusu.
+     */
+    var lastRebootDay: String
+        get() = prefs.getString(K_LAST_REBOOT_DAY, "") ?: ""
+        set(v) {
+            // commit(): yeniden baslatma hemen ardindan geliyor, apply() diske
+            // yazmaya yetismeyebilir ve donguyu tam da onlemek istedigimiz yerde acar.
+            prefs.edit().putString(K_LAST_REBOOT_DAY, v).commit()
+        }
+
     var lastSyncAt: Long
         get() = prefs.getLong(K_LAST_SYNC, 0L)
         set(v) = prefs.edit().putLong(K_LAST_SYNC, v).apply()
@@ -126,6 +141,7 @@ class Config(context: Context) {
         const val K_LAST_SYNC = "lastSyncAt"
         const val K_LAST_PROOF = "lastProofAt"
         const val K_LOG_EPOCH = "logEpoch"
+        const val K_LAST_REBOOT_DAY = "lastRebootDay"
         const val K_STARTUP_FAILURES = "startupFailures"
         const val K_GOOD_APK = "knownGoodApk"
     }

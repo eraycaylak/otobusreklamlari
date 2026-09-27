@@ -27,6 +27,23 @@ class BootReceiver : BroadcastReceiver() {
         // dusecegi icin iki yerde artirmak mukerrer sayima yol acardi.
         config.rebootCount = config.rebootCount + 1
 
+        /*
+         * Acilis saglik sayacini SIFIRLA.
+         *
+         * Sayac "yeni surum acilista cokuyor mu?" sorusunu olcmek icin var: oynatici
+         * acilirken artiyor, 2 dakika saglikli calisinca sifirlaniyor.
+         *
+         * Ama otobusun kontagi 2 dakika icinde birkac kez kapanip acilirsa (manevra,
+         * marş, gevsek baglanti) sayac artar ve sifirlanmaya firsat bulamaz. Ucuncu
+         * seferde uygulama kendini BOZUK sanip saglam surumu geri kurardi - oysa
+         * ortada yazilim hatasi yok, sadece guc titremesi var.
+         *
+         * Yeniden baslatma bir COKME DEGILDIR; burada sifirliyoruz. Boylece sayac
+         * yalnizca gercek cokme dongusunu (acilir-coker-HOME yeniden baslatir,
+         * cihaz hic yeniden baslamadan) olcer.
+         */
+        config.startupFailures = 0
+
         // Monotonik saat capasi acilista gecersizdir.
         // Saat guvenilmez -> bitis tarihli icerik oynatilmaz, evergreen'e dusulur.
         ClockManager(context).onBoot()

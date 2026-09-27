@@ -144,7 +144,8 @@ class SyncService : Service() {
         // Kademeli baslatma (stagger) manifestten SONRA yapiliyor: manifest ~2 KB,
         // 20 cihaz ayni anda cekse bile 40 KB - AP'yi bogmaz. Agir indirmeden once
         // beklemek, pencereyi bosa harcamadan AP'yi korur.
-        val manifest = fetchManifest(policyClient) ?: return
+        val cekilen = fetchManifest(policyClient) ?: return
+        val manifest = cekilen.manifest
 
         val client = Http.client(network, manifest.policy.connectTimeoutMs, manifest.policy.readTimeoutMs)
 
@@ -152,7 +153,7 @@ class SyncService : Service() {
         // Indirmeden ONCE yayimlaniyor ki suresi dolan / iptal edilen reklam
         // dosyasi hala diskte olsa bile ANINDA yayindan dussun.
         persist(manifest)
-        publish(manifest)
+        publish(cekilen)
 
         // 3) Kademeli baslatma: 20 cihaz ayni milisaniyede AP'ye yuklenmesin
         val stagger = Random.nextLong(0, manifest.policy.staggerMaxMs.coerceAtLeast(1))
@@ -164,7 +165,7 @@ class SyncService : Service() {
         downloadInPriorityOrder(manifest, client)
 
         // 5) Oynaticiyi tekrar uyar (yeni hazir olanlar devreye girsin)
-        publish(manifest)
+        publish(cekilen)
 
         // 6) Telemetri: loglar + heartbeat. Pencerenin SONUNDA, indirmeyi calmasin.
         val telemetry = Telemetry(this, config, store, db, clock)
@@ -190,7 +191,10 @@ class SyncService : Service() {
      * devam eder. Bu kasitlidir - onbellek kutusu ele gecse bile cihaza sahte
      * reklam sokulamaz.
      */
-    private fun fetchManifest(client: OkHttpClient): PlayManifest? {
+    /** Ayristirilmis manifest + onu tasiyan IMZALI HAM ZARF. */
+    private data class CekilenManifest(val manifest: PlayManifest, val zarf: String)
+
+    private fun fetchManifest(client: OkHttpClient): CekilenManifest? {
         val url = "${config.apiUrl}/api/v1/manifest"
         return try {
             client.newCall(Http.authed(url, config.token).build()).execute().use { response ->
@@ -222,7 +226,7 @@ class SyncService : Service() {
                 // yani tazedir. Bu yuzden once Date, o yoksa govdedeki serverTime.
                 val timeMs = httpDateMs ?: manifest.serverTimeMs
                 timeMs?.let { clock.onServerTime(it) }
-                manifest
+                CekilenManifest(manifest, envelope)
             }
         } catch (e: SignatureVerifier.InvalidSignature) {
             // Guvenlik olayi: panelde gorunmeli.
@@ -266,30 +270,33 @@ class SyncService : Service() {
         config.playlistVersion = manifest.playlistVersion
     }
 
-    private fun publish(manifest: PlayManifest) {
-        // Atomik: once previous'a kopyala, sonra current'i tek hamlede degistir
-        if (store.currentManifest.exists()) {
-            runCatching { store.atomicWrite(store.previousManifest, store.currentManifest.readBytes()) }
+    /**
+     * Son dogrulanmis manifesti diske yaz ve oynaticiyi uyar.
+     *
+     * OYNATMA LISTESININ KAYNAGI ROOM'DUR, bu dosya degil. Buradaki dosya TESHIS
+     * ve KANIT icindir: teknisyen cihazi alip "bu cihaz hangi listeye inaniyordu?"
+     * sorusunu cevaplayabilsin diye.
+     *
+     * Bu yuzden ozet bir JSON URETMIYORUZ, sunucudan gelen IMZALI ZARFI oldugu gibi
+     * yaziyoruz. Iki kazanc:
+     *  - Elle JSON kacisi yazma ihtiyaci (ve onun hata sinifi) tamamen ortadan kalkar.
+     *    Satir sonu / tirnak / unicode iceren bir kampanya basligi dosyayi bozamaz.
+     *  - Dosya cevrimdisi olarak YENIDEN DOGRULANABILIR: imza hala gecerlidir.
+     */
+    private fun publish(cekilen: CekilenManifest) {
+        val yeni = cekilen.zarf.toByteArray(Charsets.UTF_8)
+        runCatching {
+            val mevcut = if (store.currentManifest.exists()) store.currentManifest.readBytes() else null
+            // Icerik gercekten degistiyse oncekini sakla; ayni manifesti iki kez
+            // yayimlamak (senkron basi/sonu) gecmisi bosuna silmesin.
+            if (mevcut != null && !mevcut.contentEquals(yeni)) {
+                store.atomicWrite(store.previousManifest, mevcut)
+            }
         }
-        store.atomicWrite(
-            store.currentManifest,
-            buildLocalPlaylistJson(manifest).toByteArray(Charsets.UTF_8)
-        )
+        runCatching { store.atomicWrite(store.currentManifest, yeni) }
+            .onFailure { Log.w(TAG, "manifest diske yazilamadi: ${it.message}") }
         PlaylistBus.notifyChanged()
     }
-
-    /** Oynaticinin okudugu sadelestirilmis liste (parca bilgisi gerekmez). */
-    private fun buildLocalPlaylistJson(manifest: PlayManifest): String {
-        val items = manifest.items.joinToString(",") { i ->
-            """{"id":${q(i.id)},"sha256":${q(i.sha256)},"remotePath":${q(i.remotePath)},""" +
-                """"durationMs":${i.durationMs},"weight":${i.weight},""" +
-                """"validFrom":${i.validFrom ?: "null"},"validUntil":${i.validUntil ?: "null"},""" +
-                """"dayparts":${q(i.dayparts.joinToString(","))},"evergreen":${i.evergreen}}"""
-        }
-        return """{"playlistVersion":${manifest.playlistVersion},"items":[$items]}"""
-    }
-
-    private fun q(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** Oncelik kurallari ve gerekceleri icin bkz. [SyncPlan]. */
     private suspend fun downloadInPriorityOrder(manifest: PlayManifest, client: OkHttpClient) {
