@@ -23,6 +23,15 @@
       engelleyebilir - ve bu, hicbir kod hatasi olmadan filoyu durduran bir seydir.
     -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+      COARSE DE BEYAN EDILMEK ZORUNDA - kozmetik degil, RUNTIME sarti.
+      Android 12 (API 31) ve sonrasinda FINE konum izni, COARSE beyan edilmeden
+      ISTENEMEZ: platform istegi yok sayar. Yani yalnizca FINE beyan edildiginde
+      dpm ile verilen yetki YENI ROM'LARDA ETKISIZ kalir ve WiFi profili yazilamaz -
+      cihaz aga hic baglanmaz. Bu, yalnizca yeni bir stick modeli alindiginda ve
+      ancak SAHADA ortaya cikacak bir arizaydi; bloklayici lint tam bu sinifi yakaladi.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <!-- Dokunmatik ekran da yok: kumanda ile kullaniliyor -->

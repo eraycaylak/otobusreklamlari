@@ -54,7 +54,9 @@ class DeviceAdmin(private val context: Context) {
 
             // Izinleri otomatik ver: sahada kimse onay ekranina basmayacak
             dpm.setPermissionPolicy(admin, DevicePolicyManager.PERMISSION_POLICY_AUTO_GRANT)
+            // IKISI DE veriliyor: Android 12+ FINE'i COARSE olmadan kabul etmiyor.
             grant(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            grant(android.Manifest.permission.ACCESS_COARSE_LOCATION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 grant("android.permission.POST_NOTIFICATIONS")
             }
