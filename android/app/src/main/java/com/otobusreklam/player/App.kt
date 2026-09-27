@@ -41,7 +41,7 @@ class App : Application() {
             // Tetikleyici kurulamadiysa tek kalan yol 15 dakikalik emniyet kemeri.
             // Bunu SESSIZ gecmek, cihazin pencereleri tamamen kacirmasi demekti.
             Log.e(TAG, "ag tetikleyicisi KURULAMADI - yalnizca periyodik is kaldi")
-            config.lastError = "ag tetikleyicisi kurulamadi (senkron gecikebilir)"
+            config.hataEkle("tetikleyici", "ag tetikleyicisi kurulamadi (senkron gecikebilir)")
         }
 
         // Emniyet kemeri (15 dk) - ana yol degil

@@ -276,7 +276,24 @@ function heartbeatAlanlari (b) {
     model: metin(ham.model, 80),
     timezone: metin(ham.timezone, 64),
     lastError: metin(ham.lastError),
-    lastInstallError: metin(ham.lastInstallError)
+    lastInstallError: metin(ham.lastInstallError),
+    /*
+     * SON ARIZALARIN LISTESI - beyaz listeden gecerek.
+     *
+     * lastError tek dizgiydi ve cihaz tarafinda SEKIZ yer ona yaziyordu: son yazan
+     * digerlerini siliyordu. Disk dolu -> indirme hatasi -> log tasmasi zincirinde
+     * operator ASIL SEBEBI hic gormuyordu.
+     *
+     * Govde cihazdan geldigi icin siki siniri var: en fazla 6 kayit, alanlar tek tek
+     * okunuyor. (Serbest JSON'un kaliciya yazilmasi ayri bir ariza sinifiydi.)
+     */
+    errors: Array.isArray(ham.errors)
+      ? ham.errors.slice(0, 6).map((e) => ({
+          kod: metin(e && e.kod, 24) || 'genel',
+          metin: metin(e && e.metin, 200) || '',
+          yasSn: sayi(e && e.yasSn)
+        }))
+      : []
   }
 }
 

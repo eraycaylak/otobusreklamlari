@@ -26,7 +26,7 @@ npm test                                            # 87 test (uçtan uca + güv
 
 # 2) Android
 cd android
-./gradlew testDebugUnitTest                         # 129 birim testi
+./gradlew testDebugUnitTest                         # 140 birim testi
 
 #    Release derlemesi ÜÇ değer olmadan başlamaz (derleme anlaşılır bir mesajla durur;
 #    eskiden sessizce imzasız APK üretiyordu ve hata ancak sahada anlaşılıyordu):
@@ -116,7 +116,7 @@ Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda gir
 | Ne | Nerede | Kapsam |
 |---|---|---|
 | **Sunucu — 87 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı, fatura raporu kuralları (yalnızca tamamlanmış oynatmalar, şüpheli saat), APK yayım kanalı uçtan uca, rollout sözleşmesinin sunucu tarafı, girdi doğrulaması (`__proto__`, tarih biçimi, saklama süreleri), **panel kuralları** (cihazdan gelen metnin XSS kaçışı — kaçış düşerse ele geçirilmiş bir otobüs admin token'ını çalar, kampanya durumu, video seçimini sıfırlamama) |
-| **Android — 129 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı, **gelen zamanın kabul kuralı** — geriye alma ve imzasız kaynakla mandal zehirleme dahil), indirme önceliği (**süresi bitmiş içerik en sona** — yoksa pencere asla oynatılamayacak dosyaya giderdi), **sunucuyla kademeli yayım hash uyumu**, **manifest protokol sözleşmesi** (sunucunun ürettiği gerçek imzalı manifest üzerinde: her alan, chunk bitişikliği, policy alt/üst sınır kırpmaları), **imza doğrulama** (tek bayt değişimi, 63 baytlık imza, yanlış anahtar çifti), **indirme kabul kuralları** (Range'i yok sayan 200, yanlış aralık, parça boyutu OOM sınırı) |
+| **Android — 140 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı, **gelen zamanın kabul kuralı** — geriye alma ve imzasız kaynakla mandal zehirleme dahil), indirme önceliği (**süresi bitmiş içerik en sona** — yoksa pencere asla oynatılamayacak dosyaya giderdi), **sunucuyla kademeli yayım hash uyumu**, **manifest protokol sözleşmesi** (sunucunun ürettiği gerçek imzalı manifest üzerinde: her alan, chunk bitişikliği, policy alt/üst sınır kırpmaları), **imza doğrulama** (tek bayt değişimi, 63 baytlık imza, yanlış anahtar çifti), **indirme kabul kuralları** (Range'i yok sayan 200, yanlış aralık, parça boyutu OOM sınırı), **arıza kaydı** (kod başına tek kayıt — tekrarlayan "disk dolu" asıl sebebi listeden atmasın; yaş monotonik saatten, yeniden başlatmadan sonra "bilinmiyor") |
 | **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
 
 Android'deki saf mantık (`Daypart`, `Weighting`, `ClockMath`, `SyncPlan`, `RolloutGroup`)

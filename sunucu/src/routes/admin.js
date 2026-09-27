@@ -117,6 +117,9 @@ adminRouter.get('/state', (req, res) => {
       pendingLogs: hb?.pendingLogs ?? null,
       model: hb?.model ?? null,
       lastError: hb?.lastError ?? null,
+      // Son arizalarin listesi: tek dizgi "son yazan kazanir" demekti ve asil sebep
+      // (ornegin disk dolu) sonradan gelen bir arizanin altinda kayboluyordu.
+      errors: Array.isArray(hb?.errors) ? hb.errors : [],
       /*
        * BU UCU PANEL OKUYOR - state'e konmadigi icin HEP BOS goruniyordu.
        *

@@ -302,7 +302,7 @@ class PlayerActivity : AppCompatActivity() {
                  * panele dusuyor.
                  */
                 Log.e(TAG, "liste bos: ${result.reason}")
-                config.lastError = "EKRAN BOS: ${result.reason}"
+                config.hataEkle("ekranbos", "EKRAN BOS: ${result.reason}")
                 /*
                  * EKRANDA DA GORUNSUN.
                  *
@@ -324,6 +324,9 @@ class PlayerActivity : AppCompatActivity() {
             }
             binding.bos.visibility = View.GONE
             // Ekran yeniden doldu: onceki "bos" uyarisini temizle
+            // Ekran artik bos degil: SADECE o kaydi kaldir. Eskiden lastError kosulsuz
+            // temizleniyordu ve baska arizalarin izi de silinebiliyordu.
+            config.hataSil("ekranbos")
             if (config.lastError.startsWith("EKRAN BOS")) config.lastError = ""
 
             val playing = player?.mediaItemCount ?: 0
@@ -422,7 +425,7 @@ class PlayerActivity : AppCompatActivity() {
             val content = db.contents().get(entry.sha256)
             if ((content?.failCount ?: 0) >= MAX_PLAY_FAILURES) {
                 db.contents().setState(entry.sha256, ContentState.BAD, clock.now())
-                config.lastError = "oynatilamiyor: ${entry.itemId}"
+                config.hataEkle("oynatma", "oynatilamiyor: ${entry.itemId}")
                 Log.e(TAG, "icerik BAD isaretlendi: ${entry.itemId}")
             }
         }
@@ -485,7 +488,7 @@ class PlayerActivity : AppCompatActivity() {
                 // Kuyruktaki oynatma kaydi yeniden baslatmayla kaybolmasin
                 flushCurrentPlay(completed = false, bekleyerek = true)
                 // Sayac BootReceiver'da artiyor; burada artirmak mukerrer sayim olurdu.
-                config.lastError = "watchdog reboot"
+                config.hataEkle("watchdog", "watchdog reboot")
                 if (!admin.reboot()) kendiniYenidenBaslat()
             }
         }

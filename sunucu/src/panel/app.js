@@ -236,7 +236,27 @@ async function refresh () {
       <td class="dim">${
         // EKRAN BOS ise SEBEBI en onde: bu satirin tek isi operatore ne yapacagini soylemek.
         ekranBos && d.playlistReason ? `<div style="color:var(--bad)">${esc(String(d.playlistReason).slice(0, 80))}</div>` : ''
-      }${esc(String(d.lastError || '').slice(0, 60))}${
+      }${
+        /*
+         * ARIZALAR TEK TEK GOSTERILIR.
+         *
+         * Eskiden yalnizca lastError'in ilk 60 karakteri vardi ve o alan cihazda SEKIZ
+         * ayri yerden yaziliyordu: disk dolu -> indirme hatasi -> log tasmasi
+         * zincirinde operator yalnizca sonuncuyu goruyor, ASIL SEBEBI hic gormuyordu.
+         * Yas monotonik saatten geliyor, yani cihazin duvar saati 1970'te olsa bile
+         * "2 dk once" dogrudur (-1 = bilinmiyor, cihaz arada yeniden basladi).
+         */
+        (d.errors || []).length
+          ? d.errors.map((e) => {
+            const yas = Number(e.yasSn)
+            const ne = Number.isFinite(yas) && yas >= 0
+              ? (yas < 90 ? `${Math.round(yas)} sn` : `${Math.round(yas / 60)} dk`) + ' önce'
+              : 'zamanı bilinmiyor'
+            return `<div><span style="color:var(--warn)">[${esc(e.kod)}]</span> ` +
+                   `${esc(String(e.metin).slice(0, 70))} <span class="dim">(${esc(ne)})</span></div>`
+          }).join('')
+          : esc(String(d.lastError || '').slice(0, 60))
+      }${
         d.lastInstallError ? `<div style="color:var(--warn)">${esc(String(d.lastInstallError).slice(0, 60))}</div>` : ''
       }${
         d.policyErrors ? `<div style="color:var(--bad)">politika: ${esc(String(d.policyErrors).slice(0, 60))}</div>` : ''

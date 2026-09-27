@@ -309,7 +309,7 @@ class DeviceAdmin(private val context: Context) {
         if (ssid.isBlank()) return WifiSonuc.YAZILAMADI
         val config = Config(context)
         if (!ensureWifi(ssid, psk)) {
-            config.lastError = "WiFi profili YAZILAMADI (cihaz sahibi mi? izin var mi?)"
+            config.hataEkle("wifi", "WiFi profili YAZILAMADI (cihaz sahibi mi? izin var mi?)")
             return WifiSonuc.YAZILAMADI
         }
 
@@ -326,9 +326,10 @@ class DeviceAdmin(private val context: Context) {
             }
         }
         if (son == WifiSonuc.YAZILDI_BAGLANMADI) {
-            config.lastError = "WiFi ilisklendirilemedi: \"$ssid\" - parola yanlis olabilir " +
+            val mesaj = "WiFi ilisklendirilemedi: \"$ssid\" - parola yanlis olabilir " +
                 "(profil yazildi ama ${beklemeMs / 1000} sn icinde baglanti kurulmadi)"
-            Log.e(TAG, config.lastError)
+            config.hataEkle("wifi", mesaj)
+            Log.e(TAG, mesaj)
         }
         return son
     }

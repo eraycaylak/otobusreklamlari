@@ -156,7 +156,7 @@ class SyncService : Service() {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "senkron hatasi", e)
-                config.lastError = "${e.javaClass.simpleName}: ${e.message}"
+                config.hataEkle("senkron", "${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 /*
                  * YALNIZCA HALA GUNCEL NESILSE durum degistir.
@@ -201,13 +201,22 @@ class SyncService : Service() {
 
     private suspend fun runSync() {
         /*
-         * PENCERENIN HATA DURUMUNU BASTA TEMIZLE.
+         * PENCERENIN SENKRON HATALARINI BASTA TEMIZLE - AMA SECEREK.
          *
          * lastError heartbeat ile panele gidiyor. Onceden yalnizca pencerenin SONUNDA
          * yazilyordu, yani manifest alinamayip erken donen bir turda panel ONCEKI
          * pencerenin hatasini "guncel durum" olarak gosteriyordu. Operator duzeltilmis
          * bir sorunu gunlerce kovalayabilirdi.
+         *
+         * KOSULSUZ TEMIZLIK ARTIK YAPILMIYOR: bu satir PlayerActivity'nin yazdigi
+         * "EKRAN BOS" gibi senkrondan BAGIMSIZ sinyalleri de siliyordu - yani sistemin
+         * en yuksek oncelikli alarmi bir yaris kosuluna bagliydi. Yalnizca BU turun
+         * uretebilecegi kategoriler temizleniyor; oynatma tarafinin kayitlari
+         * (ekranbos, oynatma, watchdog) ve kalici olanlar (wifi, tetikleyici) duruyor.
          */
+        for (kod in listOf("senkron", "disk", "indirme", "logtasma", "manifest", "imza", "logack")) {
+            config.hataSil(kod)
+        }
         config.lastError = ""
 
         val policyClient = Http.client(network, 8_000, 15_000)
@@ -250,7 +259,7 @@ class SyncService : Service() {
         val bos = store.freeBytes()
         if (bos in 0 until DISK_ALT_SINIR) {
             Log.e(TAG, "temizlikten sonra da disk dolu: ${bos / 1_000_000} MB")
-            config.lastError = "DISK DOLU: ${bos / 1_000_000} MB bos - icerik guncellenemiyor"
+            config.hataEkle("disk", "DISK DOLU: ${bos / 1_000_000} MB bos - icerik guncellenemiyor")
         }
 
         // 4) Kademeli baslatma: 20 cihaz ayni milisaniyede AP'ye yuklenmesin
@@ -274,7 +283,7 @@ class SyncService : Service() {
          * istedigimiz hatalar panele HIC ULASMIYORDU. Gorunur kilmak icin eklenen
          * alan, kendi siralamasi yuzunden islevsizdi.
          */
-        downloader.sonHata?.let { config.lastError = it }
+        downloader.sonHata?.let { config.hataEkle("indirme", it) }
 
         // 7) Telemetri: loglar + heartbeat. Pencerenin SONUNDA, indirmeyi calmasin.
         val telemetry = Telemetry(this, config, store, db, clock)
@@ -298,7 +307,7 @@ class SyncService : Service() {
             .onFailure { Log.w(TAG, "log bakimi basarisiz: ${it.message}") }
             .getOrDefault(0)
         if (silinen > 0) {
-            config.lastError = "LOG TASMASI: $silinen yuklenmemis oynatma kaydi silindi"
+            config.hataEkle("logtasma", "LOG TASMASI: $silinen yuklenmemis oynatma kaydi silindi")
         }
 
         config.lastSyncAt = clock.now()
@@ -349,7 +358,7 @@ class SyncService : Service() {
                 zayifSaatDuzelt(response)
 
                 if (!response.isSuccessful) {
-                    config.lastError = "manifest HTTP ${response.code}"
+                    config.hataEkle("manifest", "manifest HTTP ${response.code}")
                     Log.w(TAG, "manifest alinamadi: ${response.code}")
                     return null
                 }
@@ -359,7 +368,7 @@ class SyncService : Service() {
                 val manifest = ManifestParser.parse(json)
 
                 if (manifest.deviceId.isNotBlank() && manifest.deviceId != config.deviceId) {
-                    config.lastError = "manifest baska cihaza ait: ${manifest.deviceId}"
+                    config.hataEkle("manifest", "manifest baska cihaza ait: ${manifest.deviceId}")
                     return null
                 }
 
@@ -388,11 +397,11 @@ class SyncService : Service() {
             }
         } catch (e: SignatureVerifier.InvalidSignature) {
             // Guvenlik olayi: panelde gorunmeli.
-            config.lastError = "IMZA GECERSIZ: ${e.message}"
+            config.hataEkle("imza", "IMZA GECERSIZ: ${e.message}")
             Log.e(TAG, "manifest imzasi gecersiz - hicbir sey indirilmiyor", e)
             null
         } catch (e: Exception) {
-            config.lastError = "manifest: ${e.message}"
+            config.hataEkle("manifest", "manifest: ${e.message}")
             Log.w(TAG, "manifest hatasi: ${e.message}")
             null
         }
@@ -533,7 +542,7 @@ class SyncService : Service() {
                  * disk dolmasi kendi kendini besleyen bir kisir donguye giriyordu.
                  */
                 Log.e(TAG, "oge indirilemedi: $id", e)
-                config.lastError = "indirme hatasi ($id): ${e.message}"
+                config.hataEkle("indirme", "indirme hatasi ($id): ${e.message}")
             }
         }
         return hazirGuncelleme

@@ -107,9 +107,38 @@ class Config(context: Context) {
         get() = prefs.getInt(K_REBOOTS, 0)
         set(v) = prefs.edit().putInt(K_REBOOTS, v).apply()
 
+    /**
+     * EN SON ariza metni. Geriye donuk uyumluluk icin korunuyor (panel ve sunucu
+     * hala okuyor), ama ASIL kanal artik [hatalar]: bu alan SEKIZ ayri yerden
+     * yaziliyor ve son yazan digerlerini siliyordu.
+     */
     var lastError: String
         get() = prefs.getString(K_LAST_ERROR, "") ?: ""
         set(v) = prefs.edit().putString(K_LAST_ERROR, v.take(500)).apply()
+
+    /**
+     * SON ARIZALARIN KUCUK LISTESI - kod basina tek kayit, en fazla HataKaydi.MAX.
+     *
+     * lastError tek dizgi oldugu icin ayni pencerede olan birden fazla ariza
+     * birbirini eziyordu: disk dolu -> indirme hatasi -> log tasmasi zincirinde
+     * panelde yalnizca son gorunuyor ve operator ASIL SEBEBI (disk dolu) hic
+     * gormuyordu. Ayrintisi HataKaydi icinde.
+     */
+    var hatalar: List<HataKaydi.Not>
+        get() = HataKaydi.coz(prefs.getString(K_HATALAR, ""))
+        set(v) = prefs.edit().putString(K_HATALAR, HataKaydi.kodla(v)).apply()
+
+    /** Ariza ekle. Ayni kod yeniden gelirse metin/zaman guncellenir. */
+    fun hataEkle(kod: String, metin: String) {
+        hatalar = HataKaydi.ekle(hatalar, kod, metin, android.os.SystemClock.elapsedRealtime())
+        // lastError geriye donuk uyumluluk icin: en son ariza.
+        lastError = metin
+    }
+
+    /** Bir ariza duzeldi: kaydini kaldir. */
+    fun hataSil(kod: String) {
+        hatalar = HataKaydi.sil(hatalar, kod)
+    }
 
     /** Son kanit karesinin gonderildigi an - gunde bir defadan sik gondermemek icin. */
     var lastProofAt: Long
@@ -281,6 +310,7 @@ class Config(context: Context) {
         const val K_PLAYLIST_VERSION = "playlistVersion"
         const val K_TIMEZONE = "timezone"
         const val K_VOLUME = "volume"
+        const val K_HATALAR = "hatalar"
         const val K_POLICY_ERRORS = "policyErrors"
         const val K_PLANNED_REBOOT = "plannedReboot"
         const val K_LAST_COUNTED_BOOT = "lastCountedBoot"

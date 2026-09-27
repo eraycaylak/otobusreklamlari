@@ -11,6 +11,7 @@ import android.os.Build
 import android.util.Log
 import com.otobusreklam.player.BuildConfig
 import com.otobusreklam.player.Config
+import com.otobusreklam.player.HataKaydi
 import com.otobusreklam.player.admin.DeviceAdmin
 import com.otobusreklam.player.clock.ClockManager
 import com.otobusreklam.player.data.AppDatabase
@@ -123,7 +124,7 @@ class Telemetry(
                      */
                     if (ack < rows.first().seq) {
                         Log.e(TAG, "sunucu ilerlemeyen ack dondu (ack=$ack < ilk=${rows.first().seq}), log yukleme durduruldu")
-                        config.lastError = "log yukleme ilerlemiyor (ack=$ack)"
+                        config.hataEkle("logack", "log yukleme ilerlemiyor (ack=$ack)")
                         return
                     }
 
@@ -232,6 +233,25 @@ class Telemetry(
             put("sessionBytes", sessionBytes)
             put("pendingLogs", db.playLog().pendingCount())
             put("lastError", config.lastError)
+            /*
+             * SON ARIZALARIN LISTESI - "son yazan kazanir" problemi icin.
+             *
+             * lastError tek dizgi oldugu icin ayni pencerede olan birden fazla ariza
+             * birbirini eziyordu: disk dolu -> indirme hatasi -> log tasmasi
+             * zincirinde panelde yalnizca son gorunuyor, operator ASIL SEBEBI
+             * (disk dolu) hic gormuyordu. Yas MONOTONIK saatten: duvar saati
+             * guvenilmez oldugu icin "2 dakika once" 1970'te bile dogru kalir.
+             */
+            val simdiUptime = android.os.SystemClock.elapsedRealtime()
+            put("errors", org.json.JSONArray().apply {
+                for (n in config.hatalar) {
+                    put(JSONObject().apply {
+                        put("kod", n.kod)
+                        put("metin", n.metin)
+                        put("yasSn", HataKaydi.yasSaniye(n, simdiUptime))
+                    })
+                }
+            })
             // Kurulum hatasi AYRI alan: asenkron geldigi icin lastError temizligine
             // yakalaniyordu ve "guncelleme neden gelmedi" sorusu cevapsiz kaliyordu.
             put("lastInstallError", config.lastInstallError)
