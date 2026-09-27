@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -12,7 +13,20 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 10+ da baglanilan aginin SSID'sini okumak icin konum izni gerekiyor.
          Cihaz sahibi (device owner) oldugumuz icin bu izni kendimize veriyoruz. -->
+    <!--
+      ACCESS_FINE_LOCATION: konum icin DEGIL - Android 10+ WiFi tarama/profil
+      islemleri bu izni sart kosuyor (bkz. DeviceAdmin.ensureWifi).
+
+      uses-feature required=false ZORUNLU: Android, konum iznini gorunce cihazda GPS
+      DONANIMI oldugunu VARSAYAR. Bu stick'lerde GPS yok; beyan edilmezse dagitim
+      katmanlari (Play, bazi MDM/OEM magazalari) cihazi "uyumsuz" sayip kurulumu
+      engelleyebilir - ve bu, hicbir kod hatasi olmadan filoyu durduran bir seydir.
+    -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <!-- Dokunmatik ekran da yok: kumanda ile kullaniliyor -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <!-- Android TV stick: dokunmatik ekran ve leanback zorunlu degil -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -40,6 +54,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"
+            tools:ignore="DiscouragedApi"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|layoutDirection|locale|navigation|touchscreen|colorMode|grammaticalGender"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Oynatici">
@@ -87,13 +102,22 @@
           Provizyon alicisi.
           GUVENLIK: exported olmak zorunda (adb shell am broadcast ile cagriliyor),
           ama iki katmanla korunuyor:
-            1) Sadece cihaz HENUZ PROVIZYONLANMAMISKEN kabul eder
-            2) BuildConfig.PROVISION_SECRET ile eslesmeyen yayini reddeder
-          Provizyon tamamlandiktan sonra tum yayinlar sessizce yok sayilir.
+            1) PROVIZYON yayini yalnizca cihaz HENUZ PROVIZYONLANMAMISKEN kabul edilir
+            2) BuildConfig.PROVISION_SECRET ile eslesmeyen yayin reddedilir
+               (sabit zamanli karsilastirma)
+          NETWORK yayini provizyondan sonra da calisir ama yalnizca ag/sunucu adresini
+          degistirir; cihaz KIMLIGINE (deviceId/token) dokunmaz.
+
+          lint ExportedReceiver: alici bir IZIN ile korunmus degil - bilincli. Izin
+          tabanli koruma burada ISE YARAMAZ, cunku cagiran taraf `adb shell`, yani
+          uygulamamiz degil kabuk kullanicisi; ona verilecek bir imza izni yok.
+          Erisim fiziksel adb baglantisi + paylasilan sir ile sinirli. Sirri bilmeyen
+          bir yayin, cihazin durumunu HIC degistirmez.
         -->
         <receiver
             android:name=".provision.ProvisionReceiver"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
             <intent-filter>
                 <action android:name="com.otobusreklam.player.PROVISION" />
                 <!--

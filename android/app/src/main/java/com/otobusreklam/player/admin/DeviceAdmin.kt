@@ -68,17 +68,17 @@ class DeviceAdmin(private val context: Context) {
             // paylasilan AP VLAN'inda herkesin cihaza baglanabilmesi demektir.
             // Servis gerektiginde tekniker ilgili cihazda elle acar.
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                dpm.setKeyguardDisabled(admin, true)
-                dpm.setStatusBarDisabled(admin, true)
-            }
+            // minSdk 24 oldugu icin API 23 (M) kontrolu GEREKSIZDI: her zaman dogru.
+            // Olu bir kosul, okuyana "bu cagri bazi cihazlarda atlaniyor" izlenimi
+            // verir ve gercek surum kontrollerinin ciddiyetini azaltir.
+            dpm.setKeyguardDisabled(admin, true)
+            dpm.setStatusBarDisabled(admin, true)
+
             // Sistem guncellemeleri yayin saatinde cihazi kapatmasin
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                dpm.setSystemUpdatePolicy(
-                    admin,
-                    android.app.admin.SystemUpdatePolicy.createWindowedInstallPolicy(180, 300) // 03:00-05:00
-                )
-            }
+            dpm.setSystemUpdatePolicy(
+                admin,
+                android.app.admin.SystemUpdatePolicy.createWindowedInstallPolicy(180, 300) // 03:00-05:00
+            )
         }.onFailure { Log.e(TAG, "politikalar uygulanamadi", it) }
     }
 
@@ -200,9 +200,8 @@ class DeviceAdmin(private val context: Context) {
     /** Gece kontrollu yeniden baslatma ve watchdog son caresi. */
     fun reboot(): Boolean {
         if (!isDeviceOwner) return false
-        return runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) { dpm?.reboot(admin); true } else false
-        }.getOrElse { false }
+        // dpm.reboot() API 24 ile geldi ve minSdk de 24: kontrol gereksizdi.
+        return runCatching { dpm?.reboot(admin); true }.getOrElse { false }
     }
 
     val hasInstallPermission: Boolean

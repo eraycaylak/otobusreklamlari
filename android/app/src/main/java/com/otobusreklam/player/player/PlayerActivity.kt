@@ -503,9 +503,8 @@ class PlayerActivity : AppCompatActivity() {
             val niyet = android.content.Intent(this, PlayerActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            val bayrak = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M)
-                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
-            else
+            // FLAG_IMMUTABLE API 23 ile geldi, minSdk 24: kontrol gereksizdi.
+            val bayrak = android.app.PendingIntent.FLAG_IMMUTABLE or
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT
             val bekleyen = android.app.PendingIntent.getActivity(this, 42, niyet, bayrak)
             val alarm = getSystemService(android.app.AlarmManager::class.java)

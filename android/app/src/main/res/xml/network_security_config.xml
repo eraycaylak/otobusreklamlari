@@ -12,8 +12,16 @@
 
   Merkez sunucu internete acilacaksa HTTPS kullanin; o zaman burayi false yapin.
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      lint InsecureBaseConfiguration: bilincli. Gizlilik burada ikincil (icerik zaten
+      halka acik otobus ekranlarinda yayinlaniyor); BUTUNLUK ise taşımadan degil
+      Ed25519 IMZASINDAN geliyor - araya giren biri gecerli manifest uretemez.
+      TLS'in bedeli ise gercek: nokta onbelleginde Range/onbellekleme karmasiklasir ve
+      her kutuya sertifika yonetimi girer. Merkez internete acilirsa buradaki degeri
+      false yapin (bkz. yukaridaki not).
+    -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

@@ -590,13 +590,9 @@ class SyncService : Service() {
             .build()
     }
 
-    private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION") stopForeground(true)
-        }
-    }
+    // STOP_FOREGROUND_REMOVE API 24 ile geldi ve minSdk de 24: surum kontrolu
+    // gereksizdi ve eski dal ULASILAMAZDI.
+    private fun stopForegroundCompat() = stopForeground(STOP_FOREGROUND_REMOVE)
 
     companion object {
         private const val TAG = "SyncService"

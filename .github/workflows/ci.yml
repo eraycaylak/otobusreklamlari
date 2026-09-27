@@ -90,7 +90,15 @@ jobs:
         working-directory: android
         run: |
           R=app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
-          test -f "$R" && cat "$R" || echo "lint metin raporu bulunamadi: $R"
+          if [ ! -f "$R" ]; then echo "lint metin raporu bulunamadi: $R"; exit 0; fi
+          cat "$R"
+          # HATALAR EN SONA: log ciktisi kuyruktan okundugu icin (57 uyari raporun
+          # buyuk kismini kapliyor) hatalar aksi halde gorunmez kalabiliyor. Bloklayici
+          # bir lint, hatasi okunamiyorsa teshis edilemeyen bir kapiya donusur.
+          echo ""
+          echo "================ LINT HATALARI (ozet) ================"
+          grep -E "^.*: Error:" "$R" || echo "(metin raporunda Error satiri yok)"
+          echo "======================================================"
 
       - name: APK derle (debug)
         working-directory: android

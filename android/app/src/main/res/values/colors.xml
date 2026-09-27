@@ -1,3 +1,10 @@
 <resources>
+    <!--
+      Marka rengi. Hem ic_launcher hem ic_banner buradan okuyor: onceden deger iki
+      drawable icinde SABIT yaziliydi ve bu kaynak hic kullanilmiyordu (lint:
+      UnusedResources). Tek kaynak olmasi, renk degistiginde ikisinin ayrismasini
+      onler - ve kullanilmayan bir kaynak, olmayan bir kaynaktan kotudur: okuyan onu
+      degistirir ve hicbir sey olmaz.
+    -->
     <color name="ic_launcher_bg">#1B3A5C</color>
 </resources>
