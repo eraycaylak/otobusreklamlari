@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { config, paths } from './config.js'
@@ -34,14 +35,65 @@ function ffmpegArgs (input, output) {
   ]
 }
 
-function run (bin, args) {
+const TRANSCODE_TIMEOUT_MS = Number(process.env.TRANSCODE_TIMEOUT_MS || 30 * 60 * 1000)
+
+/**
+ * Alt surec calistir - ZAMAN ASIMIYLA.
+ *
+ * Bozuk veya tuhaf kodlanmis bir video ffmpeg'i sonsuza kadar askida birakabilir.
+ * Zaman asimi olmadan: istek hic bitmez, gecici dosya kalir ve asili ffmpeg
+ * surecleri birikerek sunucunun CPU'sunu yer. Sahada bu "panel yavasladi, sonra
+ * durdu" seklinde gorunur ve sebebi bulunamaz.
+ */
+function run (bin, args, timeoutMs = TRANSCODE_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const p = spawn(bin, args)
     let err = ''
+    let zamanAsti = false
+
+    const zamanlayici = setTimeout(() => {
+      zamanAsti = true
+      p.kill('SIGKILL')
+    }, timeoutMs)
+
     p.stderr.on('data', (d) => { err += d.toString() })
-    p.on('error', reject)
-    p.on('close', (code) => code === 0 ? resolve() : reject(new Error(`${bin} cikis kodu ${code}: ${err.slice(0, 2000)}`)))
+    p.on('error', (e) => { clearTimeout(zamanlayici); reject(e) })
+    p.on('close', (code) => {
+      clearTimeout(zamanlayici)
+      if (zamanAsti) {
+        reject(new Error(`${bin} ${Math.round(timeoutMs / 1000)} saniyede bitmedi, durduruldu (video bozuk olabilir)`))
+      } else if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(`${bin} cikis kodu ${code}: ${err.slice(0, 2000)}`))
+      }
+    })
   })
+}
+
+/**
+ * Ayni anda kac transcode calisabilir.
+ *
+ * ffmpeg -preset slow tum cekirdekleri doyurur. Kucuk bir mini PC'de iki buyuk
+ * video ayni anda gelince sunucu kilitlenir ve o sirada noktadan manifest isteyen
+ * otobusler zaman asimina ugrar - yani PENCERE BOSA GIDER. Siraya aliyoruz.
+ */
+const MAX_ESZAMANLI = Math.max(1, Number(process.env.MAX_CONCURRENT_TRANSCODE || 1))
+let calisan = 0
+const kuyruk = []
+
+async function sirayaAl (is) {
+  if (calisan >= MAX_ESZAMANLI) {
+    await new Promise((resolve) => kuyruk.push(resolve))
+  }
+  calisan += 1
+  try {
+    return await is()
+  } finally {
+    calisan -= 1
+    const sonraki = kuyruk.shift()
+    if (sonraki) sonraki()
+  }
 }
 
 async function probeDurationMs (file) {
@@ -68,15 +120,22 @@ async function probeDurationMs (file) {
  * Dosya adi ICERIK ADRESLI'dir (sha256): ayni dosya iki kez inmez, onbellek bayatlamaz.
  */
 export async function ingest (incomingPath, originalName) {
-  const tmpOut = path.join(paths.incoming, `t-${Date.now()}.mp4`)
+  // Rastgele son ek: ayni milisaniyede gelen iki yukleme ayni gecici dosyayi
+  // kullanip birbirinin ciktisini bozmasin.
+  const tmpOut = path.join(paths.incoming, `t-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.mp4`)
   let produced
 
-  if (config.video.skipTranscode) {
-    fs.copyFileSync(incomingPath, tmpOut)
+  try {
+    if (config.video.skipTranscode) {
+      fs.copyFileSync(incomingPath, tmpOut)
+    } else {
+      await sirayaAl(() => run(config.video.ffmpeg, ffmpegArgs(incomingPath, tmpOut)))
+    }
     produced = tmpOut
-  } else {
-    await run(config.video.ffmpeg, ffmpegArgs(incomingPath, tmpOut))
-    produced = tmpOut
+  } catch (e) {
+    // Yarim kalan ciktiyi birakma: aksi halde incoming/ dizini zamanla dolar
+    fs.rmSync(tmpOut, { force: true })
+    throw e
   }
 
   const sha = await sha256File(produced)
