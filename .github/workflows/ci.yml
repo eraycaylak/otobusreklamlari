@@ -22,7 +22,7 @@ jobs:
       - name: Bagimliliklar
         working-directory: sunucu
         run: npm ci --no-audit --no-fund
-      - name: "Testler (24 test - uctan uca ve guvenlik)"
+      - name: "Testler (uctan uca, guvenlik ve transcode)"
         working-directory: sunucu
         run: npm test
 
@@ -89,17 +89,21 @@ jobs:
       # Anahtar GECICI ve isten sonra yok olur; uretim APK'si bununla
       # imzalanmaz (uretim anahtari depoda degildir).
       - name: Gecici imzalama anahtari uret
-        working-directory: android
         run: |
-          keytool -genkeypair -v -keystore "$PWD/ci-gecici.jks"             -storepass ciparola -keypass ciparola -alias ci             -keyalg RSA -keysize 2048 -validity 365             -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=TR"
+          keytool -genkeypair -v -keystore "${{ runner.temp }}/ci-gecici.jks" -storepass ciparola -keypass ciparola -alias ci -keyalg RSA -keysize 2048 -validity 365 -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=TR"
 
+      # RELEASE_KEYSTORE MUTLAK YOL OLMAK ZORUNDA: build.gradle.kts icindeki
+      # file(...) cagrisi :app MODULUNE gore cozumlenir, `android/` dizinine gore
+      # degil. Goreli bir ad verildiginde Gradle onu android/app/ altinda arar ve
+      # validateSigningRelease "keystore bulunamadi" ile duser. (Bu hatayi tam da
+      # bu adim yakaladi - onceden release varyanti hic derlenmiyordu.)
       - name: APK derle (release + R8)
         working-directory: android
         run: >
           ./gradlew --no-daemon assembleRelease
           -PMANIFEST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           -PPROVISION_SECRET=ci-test-secret-uzun-deger
-          -PRELEASE_KEYSTORE=ci-gecici.jks
+          -PRELEASE_KEYSTORE=${{ runner.temp }}/ci-gecici.jks
           -PRELEASE_KEYSTORE_PASSWORD=ciparola
           -PRELEASE_KEY_ALIAS=ci
           -PRELEASE_KEY_PASSWORD=ciparola

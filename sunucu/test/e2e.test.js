@@ -233,6 +233,78 @@ test('oynatma loglari gzip NDJSON olarak alinir ve tekrarlar elenir', async () =
   assert.equal(c2.accepted, 0, 'ayni paket tekrar gonderilirse yazilmamali')
 })
 
+/**
+ * CIFTE FATURALAMA - gecici bir ag sorunundan dogan kalici para hatasi.
+ *
+ * Ayristirilabilir satir icermeyen bir govde (kirpilmis gzip, bozulmus istek, eski
+ * surum) su zinciri tetikliyordu:
+ *   rows bos -> epoch "" -> kayitli epoch'tan farkli -> "yeni kurulum" ->
+ *   seenSeq BOS EPOCH'LA YENIDEN YAZILIYOR
+ * Bir sonraki GERCEK parti geldiginde epoch yine farkli gorunuyor, sayac yine
+ * sifirlaniyor ve o partinin TUM satirlari IKINCI KEZ faturaya yaziliyordu.
+ */
+test('bozuk/bos log partisi tekrar-eleme durumunu BOZMAZ (cifte faturalama)', async () => {
+  const kayit = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'OTOBUS-CIFT' })
+  })).json()
+  const H = { authorization: `Bearer ${kayit.device.token}` }
+  const epoch = 'kurulum-abc'
+
+  const satir = (seq) => JSON.stringify({
+    seq, epoch, itemId: 'kahve-30', sha256: itemSha,
+    startedAt: new Date().toISOString(), durationMs: 30000,
+    completed: true, playlistVersion: 2, clockTrusted: true
+  })
+
+  // 1) Normal parti
+  const ilk = await (await fetch(`${base}/api/v1/logs`, {
+    method: 'POST', headers: H, body: [satir(1), satir(2)].join('\n')
+  })).json()
+  assert.equal(ilk.accepted, 2)
+  assert.equal(ilk.ackSeq, 2)
+
+  // 2) BOZUK parti: gecerli JSON satiri yok (ag/gzip sorunu gibi)
+  const bozuk = await (await fetch(`${base}/api/v1/logs`, {
+    method: 'POST', headers: H, body: 'bu-json-degil\n{bozuk\n'
+  })).json()
+  assert.equal(bozuk.accepted, 0)
+  assert.equal(bozuk.ackSeq, 2, 'bilinen ackSeq korunmali (0 donmek cihazi geri sardirir)')
+  assert.equal(bozuk.newInstall, false, 'bozuk parti YENI KURULUM sayilmamali')
+
+  // 3) Cihaz ayni satirlari tekrar gonderdi (ACK'i alamadi sandi)
+  const tekrar = await (await fetch(`${base}/api/v1/logs`, {
+    method: 'POST', headers: H, body: [satir(1), satir(2)].join('\n')
+  })).json()
+  assert.equal(tekrar.accepted, 0, 'bozuk parti araya girse bile tekrar YAZILMAMALI')
+  assert.equal(tekrar.ackSeq, 2)
+})
+
+/**
+ * Elle atanan kanarya grubu manifestte GITMEK ZORUNDA.
+ *
+ * Sunucu bu degeri cihaz basina saklıyor ve panelde gosteriyordu ama manifestte hic
+ * gondermiyordu; cihaz grubunu deviceId hash'inden hesapliyordu. Yani "su iki otobusu
+ * kanarya yap" dendiginde guncelleme rastgele iki BASKA otobuse gidiyordu - kademeli
+ * yayimin tum amaci (riski ALACAK cihazi secmek) ortadan kalkiyordu.
+ */
+test('cihaza elle atanan rollout grubu IMZALI manifestte gonderilir', async () => {
+  const kayit = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'OTOBUS-KANARYA', rolloutGroup: 1 })
+  })).json()
+  assert.equal(kayit.device.rolloutGroup, 1)
+
+  const r = await fetch(`${base}/api/v1/manifest`, {
+    headers: { authorization: `Bearer ${kayit.device.token}` }
+  })
+  const m = verifyEnvelope(await r.json())
+  assert.ok(m, 'imza dogrulanmali')
+  assert.equal(m.deviceRolloutGroup, 1, 'elle atanan grup manifestte olmali')
+})
+
 test('KRITIK: fabrika ayarindan sonra loglar sessizce atilmaz (epoch)', async () => {
   // Bu testin korudugu hata: cihaz fabrika ayarina donunce seq 1'den baslar.
   // Sadece seq'e bakan bir tekrar elemesi TUM yeni loglari atar, ustelik yuksek
