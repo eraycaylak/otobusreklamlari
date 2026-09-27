@@ -38,6 +38,25 @@ class Config(context: Context) {
         get() = prefs.getString(K_PSK, "") ?: ""
         set(v) = prefs.edit().putString(K_PSK, v).apply()
 
+    /**
+     * Kurulum basina bir kez uretilen kalici kimlik.
+     *
+     * Oynatma logunun seq sayaci cihaz veritabanindan gelir ve fabrika ayarindan
+     * sonra 1'den yeniden baslar. Sunucu sadece seq'e baksaydi bu cihazin tum yeni
+     * loglarini "zaten gordum" diye atar, ustelik ack dondurdugu icin cihaz onlari
+     * silerdi - yani o otobusun fatura verisi kaybolurdu.
+     *
+     * Bu deger her yeni kurulumda degistigi icin sunucu sayaci temiz baslatabiliyor.
+     */
+    val logEpoch: String
+        get() {
+            prefs.getString(K_LOG_EPOCH, null)?.let { return it }
+            val yeni = java.util.UUID.randomUUID().toString()
+            // commit(): bu degerin kaybolmasi tekrar elemesini bozar, apply() yetmez.
+            prefs.edit().putString(K_LOG_EPOCH, yeni).commit()
+            return yeni
+        }
+
     var provisioned: Boolean
         get() = prefs.getBoolean(K_PROVISIONED, false)
         set(v) = prefs.edit().putBoolean(K_PROVISIONED, v).apply()
@@ -106,6 +125,7 @@ class Config(context: Context) {
         const val K_LAST_ERROR = "lastError"
         const val K_LAST_SYNC = "lastSyncAt"
         const val K_LAST_PROOF = "lastProofAt"
+        const val K_LOG_EPOCH = "logEpoch"
         const val K_STARTUP_FAILURES = "startupFailures"
         const val K_GOOD_APK = "knownGoodApk"
     }

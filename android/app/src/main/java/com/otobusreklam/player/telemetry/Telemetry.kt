@@ -50,9 +50,13 @@ class Telemetry(
             val rows = db.playLog().pending(BATCH)
             if (rows.isEmpty()) return
 
+            val epoch = config.logEpoch
             val ndjson = rows.joinToString("\n") { r ->
                 JSONObject().apply {
                     put("seq", r.seq)
+                    // Kurulum kimligi: fabrika ayarindan sonra seq 1'den baslayinca
+                    // sunucunun sayaci sifirlayabilmesi icin (bkz. Config.logEpoch)
+                    put("epoch", epoch)
                     put("itemId", r.itemId)
                     put("sha256", r.sha256)
                     put("startedAt", Instant.ofEpochMilli(r.startedAt).toString())
@@ -98,6 +102,7 @@ class Telemetry(
         val bad = contents.count { it.state == ContentState.BAD }
 
         val body = JSONObject().apply {
+            put("epoch", config.logEpoch)
             put("appVersion", BuildConfig.VERSION_CODE)
             put("appVersionName", BuildConfig.VERSION_NAME)
             put("playlistVersion", manifest.playlistVersion)

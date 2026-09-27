@@ -195,7 +195,9 @@ test('oynatma loglari gzip NDJSON olarak alinir ve tekrarlar elenir', async () =
     body
   })
   assert.equal(r1.status, 200)
-  assert.deepEqual(await r1.json(), { ackSeq: 3, accepted: 3 })
+  const c1 = await r1.json()
+  assert.equal(c1.ackSeq, 3)
+  assert.equal(c1.accepted, 3)
 
   // Cihaz ACK'i alamadi ve ayni paketi tekrar gonderdi -> tekrar yazilmamali
   const r2 = await fetch(`${base}/api/v1/logs`, {
@@ -203,7 +205,70 @@ test('oynatma loglari gzip NDJSON olarak alinir ve tekrarlar elenir', async () =
     headers: { authorization: `Bearer ${deviceToken}`, 'content-encoding': 'gzip' },
     body
   })
-  assert.deepEqual(await r2.json(), { ackSeq: 3, accepted: 0 })
+  const c2 = await r2.json()
+  assert.equal(c2.ackSeq, 3)
+  assert.equal(c2.accepted, 0, 'ayni paket tekrar gonderilirse yazilmamali')
+})
+
+test('KRITIK: fabrika ayarindan sonra loglar sessizce atilmaz (epoch)', async () => {
+  // Bu testin korudugu hata: cihaz fabrika ayarina donunce seq 1'den baslar.
+  // Sadece seq'e bakan bir tekrar elemesi TUM yeni loglari atar, ustelik yuksek
+  // ackSeq dondurdugu icin cihaz onlari silerdi -> fatura verisi kalici kaybolur.
+  const kayit = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'OTOBUS-099' })
+  })).json()
+  const H = { authorization: `Bearer ${kayit.device.token}` }
+
+  const yolla = (seq, epoch) => fetch(`${base}/api/v1/logs`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({
+      seq, epoch, itemId: 'kahve-30', sha256: itemSha,
+      startedAt: new Date().toISOString(), durationMs: 30000,
+      completed: true, playlistVersion: 2, clockTrusted: true
+    })
+  }).then((r) => r.json())
+
+  // Normal calisma
+  const a = await yolla(5, 'kurulum-A')
+  assert.equal(a.accepted, 1)
+  assert.equal(a.ackSeq, 5)
+
+  // Ayni kurulumda eski seq tekrar gelirse: elenmeli (tekrar elemesi hala calisiyor)
+  const b = await yolla(3, 'kurulum-A')
+  assert.equal(b.accepted, 0, 'ayni epoch icinde eski seq elenmeli')
+
+  // FABRIKA AYARI: yeni epoch, seq 1'den basliyor -> KABUL EDILMELI
+  const c = await yolla(1, 'kurulum-B')
+  assert.equal(c.newInstall, true, 'yeni kurulum tespit edilmeli')
+  assert.equal(c.accepted, 1, 'fabrika ayarindan sonraki log KABUL EDILMELI')
+  assert.equal(c.ackSeq, 1, 'ack yeni sayaca gore donmeli, eski yuksek deger degil')
+
+  // Yeni kurulum icinde tekrar elemesi yeniden calisiyor
+  const d = await yolla(1, 'kurulum-B')
+  assert.equal(d.accepted, 0)
+  const e = await yolla(2, 'kurulum-B')
+  assert.equal(e.accepted, 1)
+})
+
+test('epoch gondermeyen eski cihazlar calismaya devam eder', async () => {
+  const kayit = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'OTOBUS-098' })
+  })).json()
+  const H = { authorization: `Bearer ${kayit.device.token}` }
+  const yolla = (seq) => fetch(`${base}/api/v1/logs`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ seq, itemId: 'kahve-30', sha256: itemSha,
+      startedAt: new Date().toISOString(), durationMs: 1000, completed: true,
+      playlistVersion: 2, clockTrusted: true })
+  }).then((r) => r.json())
+
+  assert.equal((await yolla(1)).accepted, 1)
+  assert.equal((await yolla(1)).accepted, 0, 'epochsuz cihazda da tekrar elenmeli')
+  assert.equal((await yolla(2)).accepted, 1)
 })
 
 test('heartbeat panele islenir', async () => {

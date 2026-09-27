@@ -140,6 +140,56 @@ test('rapordaki reklamveren adi formul olarak calismaz', async () => {
   assert.ok(!/;=HYPERLINK/.test(csv), 'ham formul CSV alanina girmemeli')
 })
 
+test('async handler hatasi sureci dusurmez, 500 doner', async () => {
+  // Express 4 async handler'in REDDETMESINI yakalamaz; hata Node'un
+  // unhandledRejection'ina duser ve Node 15+ varsayilan olarak SURECI OLDURUR.
+  // tut() sarmalayicisi bunu Express'in hata zincirine baglar.
+  const express = (await import('express')).default
+  const mini = express()
+  mini.get('/patla', guard.tut(async () => { throw new Error('beklenmedik hata') }))
+  mini.get('/patla-ciplak', async () => { throw new Error('sarmalanmamis') })
+  mini.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+    res.status(500).json({ error: 'sunucu hatasi' })
+  })
+
+  const srv = mini.listen(0)
+  await new Promise((r) => srv.once('listening', r))
+  const u = `http://127.0.0.1:${srv.address().port}`
+
+  let dusen = null
+  const yakala = (e) => { dusen = e }
+  process.on('unhandledRejection', yakala)
+
+  const r = await fetch(`${u}/patla`)
+  assert.equal(r.status, 500, 'sarmalanmis handler 500 donmeli')
+  assert.deepEqual(await r.json(), { error: 'sunucu hatasi' })
+
+  await new Promise((r2) => setTimeout(r2, 50))
+  assert.equal(dusen, null, 'sarmalanmis handler yakalanmamis reddetme uretmemeli')
+
+  process.off('unhandledRejection', yakala)
+  srv.close()
+})
+
+test('admin.js icindeki TUM async route handler lari sarmalanmis', async () => {
+  // Yeni bir async uc eklenip tut() unutulursa bu test kirilir.
+  const fs = await import('node:fs')
+  const kaynak = fs.readFileSync(new URL('../src/routes/admin.js', import.meta.url), 'utf8')
+
+  const sarmalanmamis = []
+  const desen = /adminRouter\.(get|post|put|delete)\(\s*'([^']+)'\s*,\s*([^)]*)/g
+  let m
+  while ((m = desen.exec(kaynak)) !== null) {
+    const [, metod, yol, devami] = m
+    // async handler mi? (ara middleware olabilir, bu yuzden satirin devamina bakiyoruz)
+    const parca = kaynak.slice(m.index, m.index + 400)
+    if (/async\s*\(/.test(parca) && !/tut\(\s*async/.test(parca)) {
+      sarmalanmamis.push(`${metod.toUpperCase()} ${yol}`)
+    }
+  }
+  assert.deepEqual(sarmalanmamis, [], `sarmalanmamis async uc(ler): ${sarmalanmamis.join(', ')}`)
+})
+
 test('cok fazla basarisiz admin denemesi IP kilitler', async () => {
   // Bu test EN SONDA: kilitlenen IP sonraki testleri etkilerdi.
   let sawLock = false

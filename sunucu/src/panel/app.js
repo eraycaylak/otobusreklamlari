@@ -1,5 +1,27 @@
 /* eslint-env browser */
 const $ = (id) => document.getElementById(id)
+
+/**
+ * HTML kacisi.
+ *
+ * NEDEN ZORUNLU: bu paneldeki verilerin bir kismi CIHAZDAN geliyor (heartbeat'teki
+ * lastError gibi), bir kismi serbest metin (kampanya basligi, reklamveren adi,
+ * yuklenen dosya adi). Kacis yapilmadan innerHTML'e basilirsa, ele gecirilmis tek
+ * bir otobus cihazi heartbeat'e <img src=x onerror=...> yazarak panelde kod
+ * calistirabilir ve localStorage'daki ADMIN TOKENINI calabilir.
+ *
+ * Cihaz id / grup gibi alanlar sunucuda zaten dogrulaniyor ama burada ayrim
+ * yapmiyoruz: DISARIDAN gelen her sey kacisa girer.
+ */
+function esc (value) {
+  if (value === null || value === undefined) return ''
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 let TOKEN = localStorage.getItem('adminToken') || ''
 $('token').value = TOKEN
 
@@ -39,33 +61,39 @@ async function refresh () {
     const ready = d.readyItems != null ? `${d.readyItems}/${d.totalItems}` : '–'
     return `<tr>
       <td><span class="dot ${cls}"></span>${d.revoked ? 'iptal' : d.stale ? 'bayat' : 'iyi'}</td>
-      <td>${d.label || d.id}<div class="dim">${d.id}</div></td>
-      <td>${d.group}</td>
+      <td>${esc(d.label || d.id)}<div class="dim">${esc(d.id)}</div></td>
+      <td>${esc(d.group)}</td>
       <td>${fmtAgo(d.lastSeenAt)}</td>
-      <td>${d.playlistVersion ?? '–'}</td>
-      <td>${ready}</td>
-      <td>${d.appVersion ?? '–'}</td>
+      <td>${esc(d.playlistVersion ?? '–')}</td>
+      <td>${esc(ready)}</td>
+      <td>${esc(d.appVersion ?? '–')}</td>
       <td>${d.freeBytes != null ? (d.freeBytes / 1e9).toFixed(1) + ' GB' : '–'}</td>
-      <td>${d.rssi != null ? d.rssi + ' dBm' : '–'}</td>
+      <td>${d.rssi != null ? Number(d.rssi) + ' dBm' : '–'}</td>
       <td>${d.clockTrusted === false ? '<span style="color:var(--bad)">şüpheli</span>' : d.clockTrusted === true ? 'iyi' : '–'}</td>
-      <td class="dim">${(d.lastError || '').slice(0, 60)}</td>
+      <td class="dim">${esc(String(d.lastError || '').slice(0, 60))}</td>
     </tr>`
   }).join('')
 
   $('cItem').innerHTML = s.items.map((i) =>
-    `<option value="${i.sha256}">${i.originalName} — ${(i.size / 1e6).toFixed(1)} MB / ${Math.round(i.durationMs / 1000)} sn</option>`
+    `<option value="${esc(i.sha256)}">${esc(i.originalName)} — ${(i.size / 1e6).toFixed(1)} MB / ${Math.round(i.durationMs / 1000)} sn</option>`
   ).join('')
 
   $('campaigns').innerHTML = s.campaigns.map((c) => `<tr>
-    <td>${c.title}<div class="dim">${c.id}</div></td>
-    <td>${c.advertiser || '–'}</td>
-    <td>${c.validFrom ? new Date(c.validFrom).toLocaleString('tr-TR') : '–'}</td>
-    <td>${c.validUntil ? new Date(c.validUntil).toLocaleString('tr-TR') : '–'}</td>
-    <td>${c.weight}</td>
-    <td>${(c.groups || []).join(', ') || 'hepsi'}</td>
+    <td>${esc(c.title)}<div class="dim">${esc(c.id)}</div></td>
+    <td>${esc(c.advertiser || '–')}</td>
+    <td>${c.validFrom ? esc(new Date(c.validFrom).toLocaleString('tr-TR')) : '–'}</td>
+    <td>${c.validUntil ? esc(new Date(c.validUntil).toLocaleString('tr-TR')) : '–'}</td>
+    <td>${Number(c.weight) || 1}</td>
+    <td>${esc((c.groups || []).join(', ') || 'hepsi')}</td>
     <td>${c.evergreen ? 'evergreen' : 'kampanya'}</td>
-    <td><button class="sec" onclick="delCampaign('${c.id}')">sil</button></td>
+    <td><button class="sec" data-sil="${esc(c.id)}">sil</button></td>
   </tr>`).join('')
+
+  // onclick="delCampaign('...')" yerine olay delegasyonu:
+  // kimlik HTML metnine gomulmedigi icin tirnak kacirma ihtimali tamamen ortadan kalkar.
+  $('campaigns').querySelectorAll('button[data-sil]').forEach((b) => {
+    b.addEventListener('click', () => delCampaign(b.dataset.sil))
+  })
 
   $('appInfo').textContent = s.app
     ? `sürüm ${s.app.versionName} (${s.app.versionCode}) · rollout grubu ≤ ${s.app.rolloutGroup} · ${(s.app.size / 1e6).toFixed(1)} MB`

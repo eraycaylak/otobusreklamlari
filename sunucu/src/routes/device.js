@@ -63,26 +63,58 @@ deviceRouter.post('/logs', auth,
       try { body = zlib.gunzipSync(body) } catch { return res.status(400).json({ error: 'gzip cozulemedi' }) }
     }
 
-    const s = db()
-    const lastSeq = s.seenSeq[req.device.id] || 0
-    let maxSeq = lastSeq
-    const fresh = []
-
+    const rows = []
     for (const line of body.toString('utf8').split('\n')) {
       if (!line.trim()) continue
       let row
       try { row = JSON.parse(line) } catch { continue }
+      if (!Number.isFinite(Number(row.seq))) continue
+      rows.push(row)
+    }
+
+    const s = db()
+
+    /*
+     * EPOCH - neden gerekli:
+     *
+     * seq cihazdaki veritabani satir kimliginden gelir ve 1'den baslar. Cihaz
+     * fabrika ayarlarina donduruldugunde (ariza, yeniden provizyon) sayac yeniden
+     * 1'den baslar. Sadece seq'e bakan bir tekrar elemesi, bu cihazdan gelen TUM
+     * yeni loglari "zaten gordum" diye atardi - ustelik ackSeq olarak eski yuksek
+     * degeri dondurdugu icin cihaz o satirlari "yuklendi" isaretleyip SILERDI.
+     * Sonuc: o otobusun fatura verisi kalici olarak kaybolurdu.
+     *
+     * Cozum: cihaz, kurulum basina bir kez uretilen kalici bir epoch gonderiyor.
+     * Fabrika ayari -> yeni epoch -> sayac temiz baslar. Ayni epoch icinde tekrar
+     * eleme eskisi gibi calismaya devam eder.
+     */
+    const epoch = String(rows.find((r) => r.epoch)?.epoch || '')
+
+    // Eski bicim (duz sayi) ile geriye donuk uyumluluk
+    const kayit = s.seenSeq[req.device.id]
+    const onceki = (kayit && typeof kayit === 'object')
+      ? kayit
+      : { epoch: '', seq: Number(kayit) || 0 }
+
+    const yeniKurulum = epoch !== onceki.epoch
+    const lastSeq = yeniKurulum ? 0 : onceki.seq
+    if (yeniKurulum) {
+      console.log(`${req.device.id}: yeni kurulum tespit edildi (epoch "${onceki.epoch}" -> "${epoch}"), log sayaci sifirlandi`)
+    }
+
+    let maxSeq = lastSeq
+    const fresh = []
+    for (const row of rows) {
       const seq = Number(row.seq)
-      if (!Number.isFinite(seq)) continue
       if (seq > lastSeq) fresh.push(row)
       if (seq > maxSeq) maxSeq = seq
     }
 
     if (fresh.length) appendPlayLogs(req.device.id, fresh)
-    s.seenSeq[req.device.id] = maxSeq
+    s.seenSeq[req.device.id] = { epoch, seq: maxSeq }
     save()
 
-    res.json({ ackSeq: maxSeq, accepted: fresh.length })
+    res.json({ ackSeq: maxSeq, accepted: fresh.length, newInstall: yeniKurulum })
   }
 )
 

@@ -23,6 +23,7 @@ export function tooManyFailures (ip) {
 
 export function noteFailure (ip) {
   const now = Date.now()
+  if (attempts.size > 5000) budaEskileri()
   const rec = attempts.get(ip)
   if (!rec || now > rec.until) {
     attempts.set(ip, { count: 1, until: now + WINDOW_MS })
@@ -34,6 +35,36 @@ export function noteFailure (ip) {
 
 export function noteSuccess (ip) {
   attempts.delete(ip)
+}
+
+/**
+ * Suresi dolmus kayitlari temizle.
+ *
+ * Map aksi halde her goren IP icin bir giris tutar ve hic kuculmezdi; internete
+ * acik bir sunucuda bu yavas ama kesin bir bellek sizintisidir.
+ */
+function budaEskileri () {
+  const now = Date.now()
+  for (const [ip, rec] of attempts) {
+    if (now > rec.until) attempts.delete(ip)
+  }
+}
+
+/**
+ * Express 4 ASYNC HANDLER TUZAGI.
+ *
+ * Express 4, async bir handler REDDEDERSE bunu yakalamaz: hata Express'in hata
+ * zincirine hic ulasmaz, Node'un unhandledRejection'ina duser. Node 15'ten beri
+ * varsayilan davranis SURECI SONLANDIRMAKTIR - yani tek bir beklenmedik hata
+ * (disk dolu, izin sorunu, bozuk dosya) tum yayin sunucusunu dusururdu.
+ *
+ * Bu sarmalayici async handler'lari Express'in senkron sozlesmesine baglar.
+ * (Express 5 bunu kendisi yapar; 4'te elle gerekir.)
+ */
+export function tut (handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next)
+  }
 }
 
 /**

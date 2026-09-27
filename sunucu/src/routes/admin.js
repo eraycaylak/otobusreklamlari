@@ -6,7 +6,7 @@ import { db, save, bumpPlaylistVersion, readPlayLogs, readHeartbeats } from '../
 import { ingest } from '../transcode.js'
 import { buildChunks } from '../chunker.js'
 import { sha256File, randomToken, safeEqual, publicKeyBase64 } from '../crypto.js'
-import { tooManyFailures, noteFailure, noteSuccess, validId, csvSafe } from '../guard.js'
+import { tooManyFailures, noteFailure, noteSuccess, validId, csvSafe, tut } from '../guard.js'
 import { pipeline } from 'node:stream/promises'
 
 /**
@@ -107,7 +107,7 @@ adminRouter.get('/state', (req, res) => {
  *   curl -H "Authorization: Bearer <token>" --data-binary @reklam.mov \
  *        "http://sunucu/api/admin/upload?name=reklam.mov"
  */
-adminRouter.post('/upload', async (req, res) => {
+adminRouter.post('/upload', tut(async (req, res) => {
     const name = String(req.query.name || 'yukleme.mp4')
     const safe = name.replace(/[^\w.\-]/g, '_')
     const incoming = path.join(paths.incoming, `${Date.now()}-${safe}`)
@@ -119,7 +119,7 @@ adminRouter.post('/upload', async (req, res) => {
       fs.rmSync(incoming, { force: true })
       res.status(500).json({ error: 'yukleme/transcode basarisiz', detail: String(e.message || e) })
     }
-  }
+  })
 )
 
 /** Kampanya olustur/guncelle. Yayin listesi bundan uretilir. */
@@ -220,7 +220,7 @@ adminRouter.delete('/device/:id', (req, res) => {
  * rolloutGroup: cihazin grubu bu degerden KUCUK/ESITSE guncellemeyi alir.
  * Once 1 ver (birkac cihaz), 48 saat sorun yoksa rolloutGroups degerine cikar.
  */
-adminRouter.post('/app', async (req, res) => {
+adminRouter.post('/app', tut(async (req, res) => {
     // Tam sayi olmali: dosya adinda kullaniliyor ve Android versionCode zaten tam sayidir.
     const versionCode = Number(req.query.versionCode)
     if (!Number.isInteger(versionCode) || versionCode < 1 || versionCode > 2_000_000_000) {
@@ -249,7 +249,7 @@ adminRouter.post('/app', async (req, res) => {
     save()
     bumpPlaylistVersion()
     res.json({ ok: true, app: { ...s.app, chunks: undefined, chunkCount: chunks.length } })
-  }
+  })
 )
 
 /** Kademeli yayimi genislet: rolloutGroup degerini yukselt. */
