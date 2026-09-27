@@ -39,7 +39,16 @@ data class Policy(
     val staggerMaxMs: Long = 15_000,
     val parallelChunks: Int = 2,
     val connectTimeoutMs: Long = 8_000,
-    val readTimeoutMs: Long = 15_000
+    val readTimeoutMs: Long = 15_000,
+    /**
+     * Oynatici ses seviyesi (0..1). Varsayilan 0 = SESSIZ.
+     *
+     * Onceden oynaticida sabit yaziliydi ve belgeler "TV'de sesi ayarla" diyordu:
+     * tekniker otobuste TV sesiyle ugrasiyor, hicbir etkisi olmuyordu. Ustelik sunucu
+     * yine de ses kodluyordu, yani asla duyulmayacak baytlar 3 dakikalik pencereden
+     * yeniyordu. Artik tek karar sunucuda (AUDIO=1) ve iki tarafi birlikte aciyor.
+     */
+    val volume: Float = 0f
 )
 /*
  * KALDIRILAN UC ALAN: heartbeatEveryMs, maxStalenessHours, cellularAllowed.
@@ -165,7 +174,8 @@ object ManifestParser {
             staggerMaxMs = o.optLong("staggerMaxMs", d.staggerMaxMs).coerceIn(0, 60_000),
             parallelChunks = o.optInt("parallelChunks", d.parallelChunks).coerceIn(1, 4),
             connectTimeoutMs = o.optLong("connectTimeoutMs", d.connectTimeoutMs).coerceIn(1_000, 60_000),
-            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs).coerceIn(1_000, 120_000)
+            readTimeoutMs = o.optLong("readTimeoutMs", d.readTimeoutMs).coerceIn(1_000, 120_000),
+            volume = o.optDouble("volume", d.volume.toDouble()).toFloat().coerceIn(0f, 1f)
         )
     }
 

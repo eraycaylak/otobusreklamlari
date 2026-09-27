@@ -29,7 +29,13 @@ function ffmpegArgs (input, output) {
     '-vf', `scale=${v.width}:${v.height}:force_original_aspect_ratio=decrease,` +
            `pad=${v.width}:${v.height}:(ow-iw)/2:(oh-ih)/2,fps=${v.fps}`,
     '-pix_fmt', 'yuv420p', '-g', String(v.fps * 2), '-sc_threshold', '0',
-    '-c:a', 'aac', '-b:a', v.audioBitrate, '-ar', '48000', '-ac', '2',
+    // SES: varsayilan olarak TAMAMEN ATILIYOR (-an). Oynatici sessiz calistigi icin
+    // ses akisini kodlamak, asla duyulmayacak ~128 kbit/s'yi her dosyaya eklemekti -
+    // 3 dakikalik pencereye sigmak icin kurulmus bir sistemde dosyanin ~%5'i.
+    // Gerekcesi ve acma yolu: config.js -> video.audio
+    ...(v.audio
+      ? ['-c:a', 'aac', '-b:a', v.audioBitrate, '-ar', '48000', '-ac', '2']
+      : ['-an']),
     '-movflags', '+faststart',
     output
   ]

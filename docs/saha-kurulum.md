@@ -77,10 +77,14 @@
    beslemede/otomatik açılır ayara getir, **kumandayı araçtan çıkar**.
    *HDMI-CEC uygulamadan sürülmüyor* — desteği TV'ye göre değişir ve güvenilmez;
    bu adım TV menüsünden elle yapılır.
-   *Ses:* oynatıcı sesi **yazılımda sabit olarak kapalıdır** (`volume = 0f` —
-   otobüs içi ses politikası). Bu yüzden TV sesini ayarlamanın bir etkisi yok;
-   sesli yayın isteniyorsa önce uygulamada açılması gerekir (tek satır), sonra
-   TV'de ses seviyesi kilitlenir.
+   *Ses:* yayın **varsayılan olarak sessizdir** ve bu bir bant genişliği kararıdır —
+   ses akışını kodlamak, asla duyulmayacak ~128 kbit/s'yi her dosyaya eklemek demek
+   (30 sn'lik reklamda ~480 KB, dosyanın ~%5'i). Bu sistemde %5 küçük değil: tüm
+   mimari 3 dakikalık pencereye sığmak için kurulu.
+   Sesli yayın isteniyorsa karar **sunucuda tek yerde**: `AUDIO=1`. O zaman ses hem
+   kodlanır hem cihazda açılır (manifest `policy.volume`). **Daha önce yüklenmiş
+   dosyalarda ses akışı yoktur** — yeniden yüklenmeleri gerekir. Ondan sonra TV'de
+   ses seviyesini ayarlayıp kilitleyin.
 5. Stick provizyonunu yap — [`uygulama-spec.md` §10](uygulama-spec.md)
 6. Kabloları kelepçele, kutuyu kilitle.
 

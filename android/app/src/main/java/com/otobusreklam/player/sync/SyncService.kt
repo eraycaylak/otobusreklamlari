@@ -412,6 +412,8 @@ class SyncService : Service() {
         config.playlistVersion = manifest.playlistVersion
         // Daypart'in yorumlanacagi dilim: cihazin kendi dilimine GUVENMIYORUZ.
         if (manifest.timezone.isNotBlank()) config.timezone = manifest.timezone
+        // Ses seviyesi de sunucudan: APK yeniden derlenmeden acilabilsin.
+        config.volume = manifest.policy.volume
     }
 
     /**

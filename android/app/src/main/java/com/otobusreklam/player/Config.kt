@@ -91,6 +91,14 @@ class Config(context: Context) {
         get() = runCatching { java.time.ZoneId.of(timezone) }
             .getOrElse { java.time.ZoneId.systemDefault() }
 
+    /**
+     * Oynatici ses seviyesi (0..1). Manifest policy'sinden geliyor, varsayilan SESSIZ.
+     * Cihazda saklaniyor cunku oynatici manifesti degil Room/Config'i okuyor.
+     */
+    var volume: Float
+        get() = prefs.getFloat(K_VOLUME, 0f)
+        set(v) = prefs.edit().putFloat(K_VOLUME, v.coerceIn(0f, 1f)).apply()
+
     var playlistVersion: Int
         get() = prefs.getInt(K_PLAYLIST_VERSION, 0)
         set(v) = prefs.edit().putInt(K_PLAYLIST_VERSION, v).apply()
@@ -219,6 +227,7 @@ class Config(context: Context) {
         const val K_PROVISIONED = "provisioned"
         const val K_PLAYLIST_VERSION = "playlistVersion"
         const val K_TIMEZONE = "timezone"
+        const val K_VOLUME = "volume"
         const val K_REBOOTS = "reboots"
         const val K_LAST_ERROR = "lastError"
         const val K_LAST_SYNC = "lastSyncAt"

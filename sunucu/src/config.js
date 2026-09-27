@@ -27,6 +27,26 @@ export const config = {
     height: Number(process.env.VIDEO_HEIGHT || 1080),
     fps: Number(process.env.VIDEO_FPS || 25),
     audioBitrate: process.env.AUDIO_BITRATE || '128k',
+
+    /*
+     * SES: VARSAYILAN KAPALI - ve bu bir bant genisligi karari.
+     *
+     * Otobus ici ses politikasi geregi oynatici sessiz cikiyor. Ses akisini yine de
+     * kodlamak, ASLA DUYULMAYACAK 128 kbit/s'yi her dosyaya eklemek demekti: 30
+     * saniyelik bir reklamda ~480 KB, tipik bir dosyanin ~%5'i.
+     *
+     * Bu sistemde %5 kucuk bir sayi degil: tum mimari 3 dakikalik pencereye SIGMAK
+     * icin kurulu (transcode, parcali indirme, nokta onbellegi). Duyulmayan ses icin
+     * o pencerenin yirmide birini harcamak, cozmeye calistigimiz problemi bilerek
+     * buyutmek olur.
+     *
+     * AUDIO=1 yaparsaniz: ses kodlanir VE policy.volume manifestle cihaza gider, yani
+     * oynatici da sesi acar. Tek karar, iki yerde tutarli. DIKKAT: daha once yuklenmis
+     * dosyalarda ses akisi YOKTUR; onlarin yeniden yuklenmesi gerekir.
+     */
+    audio: (process.env.AUDIO || '0') === '1',
+    /** Oynatici ses seviyesi (0..1). Ses kapaliyken anlamsiz oldugu icin 0'a kilitlenir. */
+    volume: Math.min(1, Math.max(0, Number(process.env.VOLUME || 1))),
     ffmpeg: process.env.FFMPEG_BIN || 'ffmpeg',
     ffprobe: process.env.FFPROBE_BIN || 'ffprobe',
     // Test ortaminda ffmpeg yoksa yuklenen dosya oldugu gibi kabul edilir.

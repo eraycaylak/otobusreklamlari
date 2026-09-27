@@ -99,7 +99,17 @@ export function buildManifest (device) {
       staggerMaxMs: 15000,          // 20 cihaz ayni anda AP'yi bogmasin
       parallelChunks: 2,            // paylasimli AP'de 2 baglanti en verimlisi
       connectTimeoutMs: 8000,
-      readTimeoutMs: 15000
+      readTimeoutMs: 15000,
+      /*
+       * OYNATICI SES SEVIYESI (0..1) - sunucudan geliyor.
+       *
+       * Onceden oynaticida `volume = 0f` SABIT yaziliydi ve belgeler "TV'de sesi
+       * ayarla" diyordu: tekniker otobuste TV sesiyle ugrasiyor, hicbir etkisi
+       * olmuyordu. Daha kotusu, transcode yine de ses kodluyordu - yani asla
+       * duyulmayacak baytlar 3 dakikalik pencereden yeniyordu.
+       * Artik TEK karar: AUDIO=1 hem sesi kodlar hem cihazda acar.
+       */
+      volume: config.video.audio ? config.video.volume : 0
       /*
        * heartbeatEveryMs / maxStalenessHours / cellularAllowed KALDIRILDI.
        *

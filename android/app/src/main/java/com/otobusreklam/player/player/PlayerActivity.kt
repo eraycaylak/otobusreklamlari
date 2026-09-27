@@ -203,9 +203,17 @@ class PlayerActivity : AppCompatActivity() {
         val exo = ExoPlayer.Builder(this).build()
         exo.repeatMode = Player.REPEAT_MODE_ALL
         exo.playWhenReady = true
-        // Otobus ici ses politikasi: varsayilan sessiz.
-        // Isletmeci ses istiyorsa burayi manifest policy'sine baglayin.
-        exo.volume = 0f
+        /*
+         * SES SUNUCUDAN GELIYOR (varsayilan 0 = sessiz).
+         *
+         * Onceden burada `0f` SABIT yaziliydi. Iki sonucu vardi:
+         *  - belgeler "TV'de sesi ayarla" diyordu ve tekniker otobuste bununla
+         *    ugrasiyordu; hicbir etkisi yoktu
+         *  - sunucu yine de 128 kbit/s ses kodluyordu, yani ASLA DUYULMAYACAK baytlar
+         *    3 dakikalik pencereden yeniyordu (tipik dosyanin ~%5'i)
+         * Artik tek karar sunucuda (AUDIO=1): hem ses kodlanir hem cihaz acar.
+         */
+        exo.volume = config.volume
 
         exo.addListener(object : Player.Listener {
 

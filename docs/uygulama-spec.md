@@ -82,11 +82,27 @@ devam eder. Önbellek kutusu ele geçse bile cihaza sahte reklam yüklenemez.
     "chunks": [{"i":0,"offset":0,"len":4194304,"sha256":"aa.."}]
   }],
   "app": { "versionCode": 42, "url": "app/reklam-42.apk", "rolloutGroup": 1, "critical": false, "chunks": [] },
-  "policy": { "staggerMaxMs": 15000, "parallelChunks": 2, "connectTimeoutMs": 8000, "readTimeoutMs": 15000 }
+  "policy": { "staggerMaxMs": 15000, "parallelChunks": 2, "connectTimeoutMs": 8000,
+              "readTimeoutMs": 15000, "volume": 0 }
 }
 ```
 
 `policy` sunucudan gelir: cihaz davranışını **APK yayımlamadan** ayarlayabilirsiniz.
+
+> **Her alan gerçekten kullanılıyor.** Daha önce `heartbeatEveryMs`,
+> `maxStalenessHours` ve `cellularAllowed` de gönderiliyordu ama cihazda **hiçbir
+> yerde okunmuyordu**. Kullanılmayan bir ayar, olmayan bir ayardan kötüdür: operatör
+> değeri değiştirir, hiçbir şey olmaz ve sebebi aranırken zaman kaybedilir. Üçü de
+> kaldırıldı (`maxStalenessHours` sunucu tarafında gerçek bir ayara dönüştü:
+> `STALE_HOURS`).
+>
+> `volume` bunun tersi bir örnek: oynatıcıda `0f` **sabit yazılıydı** ve belgeler
+> "TV'de sesi ayarla" diyordu — teknisyen otobüste TV sesiyle uğraşıyor, hiçbir etkisi
+> olmuyordu. Üstelik sunucu yine de 128 kbit/s ses kodluyordu, yani **asla
+> duyulmayacak** baytlar 3 dakikalık pencereden yeniyordu (30 sn'lik reklamda
+> ~480 KB = dosyanın ~%5'i; 2500 kbit/s video + 128 kbit/s ses aritmetiği). Artık tek
+> karar sunucuda: `AUDIO=1` hem sesi kodlar hem cihazda açar. Eski dosyalarda ses
+> akışı yoktur, yeniden yüklenmeleri gerekir.
 
 ---
 
