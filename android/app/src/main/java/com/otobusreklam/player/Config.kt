@@ -57,9 +57,39 @@ class Config(context: Context) {
             return yeni
         }
 
+    /**
+     * Kurulum kimligini YENILE.
+     *
+     * Veritabani sifirdan olustugunda (fabrika ayari, uygulama verisi temizligi,
+     * bozuk dosyanin arsivlenmesi) seq 1'den baslar. Epoch de degismezse sunucu yeni
+     * satirlari tekrar sayip atar ve cihaza onlari silmesini soyler. Bu yuzden cagiran
+     * yer AppDatabase'in onCreate geri cagrisidir: veritabani kimligiyle BIRLIKTE
+     * degismesi gerekir, tek basina SharedPreferences'in ayakta kalmasi yetmez.
+     */
+    fun newLogEpoch(): String {
+        val yeni = java.util.UUID.randomUUID().toString()
+        prefs.edit().putString(K_LOG_EPOCH, yeni).commit()
+        return yeni
+    }
+
     var provisioned: Boolean
         get() = prefs.getBoolean(K_PROVISIONED, false)
         set(v) = prefs.edit().putBoolean(K_PROVISIONED, v).apply()
+
+    /**
+     * Sunucudan gelen saat dilimi (daypart bu dilimde yorumlanir).
+     *
+     * Bos ise cihazin kendi dilimi kullanilir - bu bir GERI DUSME, tercih degil:
+     * stick'in dilimi tipik olarak dokunulmamis ROM varsayilanidir.
+     */
+    var timezone: String
+        get() = prefs.getString(K_TIMEZONE, "") ?: ""
+        set(v) = prefs.edit().putString(K_TIMEZONE, v).apply()
+
+    /** Daypart icin kullanilacak saat dilimi; bozuk/eksik degerde cihaz dilimi. */
+    val zoneId: java.time.ZoneId
+        get() = runCatching { java.time.ZoneId.of(timezone) }
+            .getOrElse { java.time.ZoneId.systemDefault() }
 
     var playlistVersion: Int
         get() = prefs.getInt(K_PLAYLIST_VERSION, 0)
@@ -111,6 +141,21 @@ class Config(context: Context) {
      * Guncelleme sonrasi uygulama acilista cokerse bu sayac artar; esik asilinca
      * saklanan onceki APK geri kurulur.
      */
+    /**
+     * Onceki acilisin MONOTONIK zamani (SystemClock.elapsedRealtime).
+     *
+     * Acilis saglik sayacini dogru degerlendirmek icin: iki acilis arasi sure uzunsa
+     * onceki calisma saglikliydi ve sayac sifirlanir. Sistem saati DEGIL kullaniliyor;
+     * bu cihazlarda sistem saati guvenilmez ve negatif fark (yeniden baslatma) da
+     * dogru bicimde "sifirla" anlamina gelir.
+     */
+    var lastStartElapsed: Long
+        get() = prefs.getLong(K_LAST_START_ELAPSED, 0L)
+        set(v) {
+            // commit(): hemen ardindan cokebiliriz ve bu deger tam da o durumu olcuyor.
+            prefs.edit().putLong(K_LAST_START_ELAPSED, v).commit()
+        }
+
     var startupFailures: Int
         get() = prefs.getInt(K_STARTUP_FAILURES, 0)
         set(v) = prefs.edit().putInt(K_STARTUP_FAILURES, v).apply()
@@ -145,6 +190,7 @@ class Config(context: Context) {
         const val K_PSK = "psk"
         const val K_PROVISIONED = "provisioned"
         const val K_PLAYLIST_VERSION = "playlistVersion"
+        const val K_TIMEZONE = "timezone"
         const val K_REBOOTS = "reboots"
         const val K_LAST_ERROR = "lastError"
         const val K_LAST_SYNC = "lastSyncAt"
@@ -153,6 +199,7 @@ class Config(context: Context) {
         const val K_LAST_REBOOT_DAY = "lastRebootDay"
         const val K_SAFE_MODE = "safeMode"
         const val K_STARTUP_FAILURES = "startupFailures"
+        const val K_LAST_START_ELAPSED = "lastStartElapsed"
         const val K_GOOD_APK = "knownGoodApk"
     }
 }

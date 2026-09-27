@@ -43,7 +43,17 @@ export const config = {
   },
 
   // Uygulama guncellemesi icin kademeli yayim: cihazlar 1..N grubuna dagitilir.
-  rolloutGroups: Number(process.env.ROLLOUT_GROUPS || 4)
+  rolloutGroups: Number(process.env.ROLLOUT_GROUPS || 4),
+
+  /*
+   * ISLETMENIN SAAT DILIMI.
+   *
+   * Daypart ("07:00-10:00") bu dilime gore yorumlanir ve deger MANIFESTLE cihaza
+   * gider. Cihazin kendi saat dilimine BIRAKILAMAZ: o deger provizyonda kimsenin
+   * dokunmadigi bir ROM varsayilanidir ve ucuz stick'lerde sik sik UTC cikar - yani
+   * sabah kusagi reklami ogleden sonra doner. Sunucu tek kaynak olmali.
+   */
+  timezone: process.env.TIMEZONE || 'Europe/Istanbul'
 }
 
 export const paths = {

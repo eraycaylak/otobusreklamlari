@@ -41,6 +41,17 @@ export function buildManifest (device) {
     deviceGroup: group,
     generatedAt: new Date().toISOString(),
     serverTime: new Date().toISOString(),
+    /*
+     * DAYPART'IN YORUMLANACAGI SAAT DILIMI - SUNUCUDAN GELIR.
+     *
+     * Cihaz onceden ZoneId.systemDefault() kullaniyordu, yani "07:00-10:00" kurali
+     * STICK'IN saat dilimine gore uygulaniyordu. O deger provizyonda kimsenin
+     * dokunmadigi bir ROM varsayilanidir; ucuz cihazlarda sik sik UTC cikar. Turkiye
+     * icin bu 3 SAAT kaymadir: sabah kusagi icin satilan reklam 10:00-13:00 arasi
+     * doner. Sozlesmeye aykiri yayin, ustelik hicbir yerde gorunmeyen bir bicimde.
+     * Kaynak tek olmali ve panelin bildigi yer olmali: sunucu.
+     */
+    timezone: config.timezone,
     items,
     app: s.app
       ? {

@@ -49,7 +49,16 @@ import kotlin.random.Random
  */
 class SyncService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob())
+    /**
+     * Kapsam YENIDEN OLUSTURULABILIR olmak zorunda.
+     *
+     * onDestroy `scope.cancel()` yapiyor. Servis nesnesi hemen yok olmadigi icin
+     * (Android kendi zamanlamasiyla siler) arada gelen yeni bir WiFi olayi ayni nesne
+     * uzerinde onStartCommand tetikleyebilir: is IPTAL EDILMIS bir kapsamda baslatilir,
+     * yani hic calismaz ve o pencere sessizce kaybolur. Her baslatmada kapsamin canli
+     * oldugunu dogruluyoruz.
+     */
+    private var scope = CoroutineScope(SupervisorJob())
     private var job: Job? = null
 
     @Volatile private var network: Network? = null
@@ -95,12 +104,17 @@ class SyncService : Service() {
 
         if (!config.configured) {
             Log.w(TAG, "cihaz provizyonlanmamis, senkron atlandi")
-            stopSelf()
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
         // Zaten calisan bir oturum varsa ikincisini baslatma.
         if (running) return START_STICKY
+
+        if (!scope.isActive) {
+            Log.i(TAG, "kapsam iptal edilmisti, yenisi olusturuluyor")
+            scope = CoroutineScope(SupervisorJob())
+        }
 
         network = net
         running = true
@@ -149,12 +163,25 @@ class SyncService : Service() {
         job?.cancel()
         running = false
         stopForegroundCompat()
-        stopSelf()
+        // startId ile: bu durdurma istegi icin duruyoruz. Parametresiz stopSelf()
+        // BEKLEYEN start isteklerini yok sayar ve araya giren yeni bir WiFi olayinin
+        // baslattigi senkronu daha dogmadan oldururdu.
+        stopSelf(sonStartId)
     }
 
     // ------------------------------------------------------------------ akis
 
     private suspend fun runSync() {
+        /*
+         * PENCERENIN HATA DURUMUNU BASTA TEMIZLE.
+         *
+         * lastError heartbeat ile panele gidiyor. Onceden yalnizca pencerenin SONUNDA
+         * yazilyordu, yani manifest alinamayip erken donen bir turda panel ONCEKI
+         * pencerenin hatasini "guncel durum" olarak gosteriyordu. Operator duzeltilmis
+         * bir sorunu gunlerce kovalayabilirdi.
+         */
+        config.lastError = ""
+
         val policyClient = Http.client(network, 8_000, 15_000)
 
         // 1) MANIFEST ONCE, GECIKMESIZ.
@@ -172,19 +199,45 @@ class SyncService : Service() {
         persist(manifest)
         publish(cekilen)
 
-        // 3) Kademeli baslatma: 20 cihaz ayni milisaniyede AP'ye yuklenmesin
+        /*
+         * 3) TEMIZLIK INDIRMEDEN ONCE.
+         *
+         * Onceden temizlik pencerenin SONUNDAYDI. Sonuc kisir bir dongu: disk dolu
+         * oldugu icin indirmeler basarisiz olur, indirme basarisiz oldugu icin (eski
+         * hata yolunda) senkron erken doner ve temizlige HIC sira gelmez. Disk kendi
+         * kendini bir daha bosaltamaz ve cihaz kalici olarak durur.
+         *
+         * Dogru sira: once yerini artik hak etmeyen dosyalari sil, sonra indir.
+         * Silinecek sey manifestten belli; indirme sonucuna bagli degil.
+         */
+        val keep = manifest.items.map { it.sha256 }.toMutableSet()
+        manifest.app?.sha256?.let { keep += it }
+        runCatching { store.cleanup(keep) }   // known-good.apk FileStore tarafinda korunuyor
+            .onFailure { Log.w(TAG, "dosya temizligi basarisiz: ${it.message}") }
+        runCatching { db.bakim(keep, clock.now() - LOG_SAKLAMA_MS) }
+            .onFailure { Log.w(TAG, "veritabani bakimi basarisiz: ${it.message}") }
+
+        // Temizlikten SONRA bakiyoruz: hala yer yoksa bu pencerede indirme sansi yok
+        // ve sebebi panelde gorunmeli (yoksa cihaz "sessizce guncellenmiyor" olur).
+        val bos = store.freeBytes()
+        if (bos in 0 until DISK_ALT_SINIR) {
+            Log.e(TAG, "temizlikten sonra da disk dolu: ${bos / 1_000_000} MB")
+            config.lastError = "DISK DOLU: ${bos / 1_000_000} MB bos - icerik guncellenemiyor"
+        }
+
+        // 4) Kademeli baslatma: 20 cihaz ayni milisaniyede AP'ye yuklenmesin
         val stagger = Random.nextLong(0, manifest.policy.staggerMaxMs.coerceAtLeast(1))
         Log.i(TAG, "kademeli baslatma: ${stagger}ms")
         delay(stagger)
 
-        // 4) Oncelik sirasiyla indir
+        // 5) Oncelik sirasiyla indir
         downloader.resetSessionStats()
-        downloadInPriorityOrder(manifest, client)
+        val bekleyenGuncelleme = downloadInPriorityOrder(manifest, client)
 
-        // 5) Oynaticiyi tekrar uyar (yeni hazir olanlar devreye girsin)
+        // 6) Oynaticiyi tekrar uyar (yeni hazir olanlar devreye girsin)
         publish(cekilen)
 
-        // 6) Telemetri: loglar + heartbeat. Pencerenin SONUNDA, indirmeyi calmasin.
+        // 7) Telemetri: loglar + heartbeat. Pencerenin SONUNDA, indirmeyi calmasin.
         val telemetry = Telemetry(this, config, store, db, clock)
         telemetry.uploadLogs(client)
         telemetry.sendHeartbeat(client, manifest, downloader.sessionBytes)
@@ -194,17 +247,29 @@ class SyncService : Service() {
             telemetry.sendProofFrame(client)   // gunde en fazla bir kez, en sona birakilir
         }
 
-        // 7) Temizlik
-        val keep = manifest.items.map { it.sha256 }.toMutableSet()
-        manifest.app?.sha256?.let { keep += it }
-        store.cleanup(keep)   // known-good.apk FileStore tarafinda korunuyor
-        db.playLog().purgeOlderThan(clock.now() - 30L * 24 * 3600 * 1000)
-
         config.lastSyncAt = clock.now()
         // Indirme sirasinda anlasilir bir sorun olduysa (disk dolu, bozuk manifest)
         // onu KORU; yoksa temizle. Aksi halde tespit edilebilir tek ipucu kayboluyordu.
-        config.lastError = downloader.sonHata ?: ""
+        downloader.sonHata?.let { config.lastError = it }
         Log.i(TAG, "senkron tamam, oturumda inen: ${downloader.sessionBytes / 1024} KB")
+
+        /*
+         * 8) UYGULAMA GUNCELLEMESI EN SONDA KURULUR.
+         *
+         * PackageInstaller.commit() basarili olursa sistem SUREci OLDURUR (kendi
+         * paketimizi degistiriyoruz). Kurulum pencerenin ortasindayken yapildiginda
+         * bundan sonrasi HIC CALISMIYORDU: oynatma loglari yuklenmiyor, heartbeat
+         * gitmiyor, temizlik yapilmiyor, lastSyncAt yazilmiyordu. Sonuc: guncelleme
+         * alan cihaz panelde "gunlerdir senkron olmadi" gorunuyor ve o pencerenin
+         * fatura kayitlari bir sonraki ziyarete kaliyordu.
+         *
+         * APK zaten diskte ve dogrulanmis; kurulumu pencerenin en sonuna almanin
+         * hicbir maliyeti yok.
+         */
+        bekleyenGuncelleme?.let {
+            Log.i(TAG, "uygulama guncellemesi kuruluyor (pencerenin sonu): ${it.versionCode}")
+            Updater(this, config, store).install(it)
+        }
     }
 
     /**
@@ -221,15 +286,22 @@ class SyncService : Service() {
         val url = "${config.apiUrl}/api/v1/manifest"
         return try {
             client.newCall(Http.authed(url, config.token).build()).execute().use { response ->
+                /*
+                 * ZAMANI HER DURUMDA OKU - BASARISIZ YANITTA DA.
+                 *
+                 * Onceden `Date` yalnizca basarili yanitta okunuyordu. Saati bozulmus
+                 * bir cihazda (guc kesintisi -> 1970) manifest herhangi bir sebeple
+                 * gelmezse - 401, 404, bozuk imza - saat de duzelmiyordu. Oysa Date
+                 * basligi 500 yanitinda bile gelir ve o cihazin tek zaman kaynagidir.
+                 * Saatin bozuk kalmasi tum oynatma kayitlarina 1970 damgasi atar.
+                 */
+                zayifSaatDuzelt(response)
+
                 if (!response.isSuccessful) {
                     config.lastError = "manifest HTTP ${response.code}"
                     Log.w(TAG, "manifest alinamadi: ${response.code}")
                     return null
                 }
-
-                // Saat duzeltmesi: ayri NTP portu acmaya gerek yok, Date basligi yeter.
-                // Date basligi HER ZAMAN oncelikli - asagida sebebi aciklaniyor.
-                val httpDateMs = response.headers.getDate("Date")?.time
 
                 val envelope = response.body?.string().orEmpty()
                 val json = SignatureVerifier.open(envelope, BuildConfig.MANIFEST_PUBLIC_KEY)
@@ -240,15 +312,27 @@ class SyncService : Service() {
                     return null
                 }
 
-                // SAAT KAYNAGI SIRASI ONEMLI:
-                // Nokta onbellegi (nginx) PtMP linki koptugunda BAYAT manifest servis eder
-                // (proxy_cache_use_stale). O manifestin govdesindeki serverTime saatlerce
-                // eski olabilir; ona guvenirsek cihazin saati GERIYE gider ve suresi dolmus
-                // reklamlar yeniden gecerli hale gelir.
-                // Date basligini ise her zaman son atlayan sunucu (onbellek kutusu) uretir,
-                // yani tazedir. Bu yuzden once Date, o yoksa govdedeki serverTime.
-                val timeMs = httpDateMs ?: manifest.serverTimeMs
-                timeMs?.let { clock.onServerTime(it) }
+                /*
+                 * GUVENILIR SAAT KAYNAGI: IMZALI GOVDEDEKI serverTime.
+                 *
+                 * Onceden burada tam TERSI yapiliyordu: `Date` basligi HER ZAMAN
+                 * oncelikliydi. Gerekcesi "nokta onbellegi bayat manifest servis
+                 * edebilir, Date ise tazedir" idi - ve bu gerekce, tehdit modelini
+                 * atliyordu:
+                 *   - manifest govdesi Ed25519 ile IMZALI, dolayisiyla serverTime'i
+                 *     yalnizca ozel anahtara sahip olan yazabilir
+                 *   - `Date` basligi imzanin DISINDA, duz metin bir basliktir; ag duz
+                 *     HTTP oldugu icin AP agina erisebilen HERKES onu degistirebilir
+                 * Yani kod, tek guvenilir kaynagi birakip tek guvenilmez olani
+                 * seciyordu. Saati geriye almak, SURESI DOLMUS veya IPTAL EDILMIS
+                 * reklamlari yeniden yayina sokar: dogrudan ticari ve hukuki zarar.
+                 *
+                 * Bayat manifest sorunu ise hala cozuluyor, saatle degil dogru araci
+                 * kullanarak: imzali govdedeki serverTime zaten bayat manifestin
+                 * KENDI uretim zamanidir ve ClockManager geriye giden zamani reddeder,
+                 * yani bayat bir kopya saati geri alamaz - yalnizca guncelleyemez.
+                 */
+                manifest.serverTimeMs?.let { clock.onServerTime(it, signed = true) }
                 CekilenManifest(manifest, envelope)
             }
         } catch (e: SignatureVerifier.InvalidSignature) {
@@ -261,6 +345,18 @@ class SyncService : Service() {
             Log.w(TAG, "manifest hatasi: ${e.message}")
             null
         }
+    }
+
+    /**
+     * ZAYIF saat duzeltmesi: imzasiz `Date` basligindan.
+     *
+     * Bu cagri saati GUVENILIR YAPMAZ (bkz. ClockManager: imzasiz kaynak imzali capayi
+     * ezemez ve guven vermez). Amaci tek: guc kesintisinden sonra 1970'te kalan cihazin
+     * damgalarini makul hale getirmek. Bitis tarihi zorlamasi buna dayanmaz.
+     */
+    private fun zayifSaatDuzelt(response: okhttp3.Response) {
+        val dateMs = runCatching { response.headers.getDate("Date")?.time }.getOrNull() ?: return
+        clock.onServerTime(dateMs, signed = false)
     }
 
     private suspend fun persist(manifest: PlayManifest) {
@@ -291,6 +387,8 @@ class SyncService : Service() {
             }
         }
         config.playlistVersion = manifest.playlistVersion
+        // Daypart'in yorumlanacagi dilim: cihazin kendi dilimine GUVENMIYORUZ.
+        if (manifest.timezone.isNotBlank()) config.timezone = manifest.timezone
     }
 
     /**
@@ -321,31 +419,44 @@ class SyncService : Service() {
         PlaylistBus.notifyChanged()
     }
 
-    /** Oncelik kurallari ve gerekceleri icin bkz. [SyncPlan]. */
-    private suspend fun downloadInPriorityOrder(manifest: PlayManifest, client: OkHttpClient) {
+    /**
+     * Oncelik kurallari ve gerekceleri icin bkz. [SyncPlan].
+     * @return indirilip kurulmayi bekleyen uygulama guncellemesi (varsa)
+     */
+    private suspend fun downloadInPriorityOrder(manifest: PlayManifest, client: OkHttpClient): AppUpdate? {
         val update = manifest.app?.takeIf { shouldTakeUpdate(it, manifest.rolloutGroups) }
+        var hazirGuncelleme: AppUpdate? = null
 
         val byId = HashMap<String, ManifestItem>()
         val needs = ArrayList<SyncPlan.Need>()
 
         for (item in manifest.items) {
             if (isReady(item)) continue
+            /*
+             * "Kalan bayt" hesabinda HIC BASLANMAMIS ile BITMIS ayirt edilmek zorunda.
+             *
+             * remainingBytes() ikisinde de 0 doner (satir yok / hepsi done=1). Onceden
+             * 0 gorunce tum dosya boyutu kalan sayiliyordu: tamami inmis ama henuz
+             * dogrulanip READY yapilmamis bir dosya, siralamada EN BUYUK is gibi
+             * gorunup EN SONA atiliyordu. Yani pencere, bitmesine tek bir dogrulama
+             * kalan dosya yerine bastan indirilecek kocaman dosyaya harcaniyordu.
+             */
+            val parcaSayisi = db.chunks().count(item.sha256)
             val remaining = db.chunks().remainingBytes(item.sha256)
             needs += SyncPlan.Need(
                 id = item.id,
                 evergreen = item.evergreen,
                 validFrom = item.validFrom,
-                // Parca kaydi yoksa (hic baslanmamis) tum dosya kalmis demektir
-                remainingBytes = if (remaining > 0L) remaining else item.size
+                remainingBytes = if (parcaSayisi > 0) remaining else item.size
             )
             byId[item.id] = item
         }
 
         for (id in SyncPlan.order(needs, appUpdate = update != null, appCritical = update?.critical == true)) {
-            if (!stillRunning()) return
+            if (!stillRunning()) return hazirGuncelleme
             try {
                 if (id == SyncPlan.APP_UPDATE) {
-                    update?.let { applyUpdate(it, manifest, client) }
+                    update?.let { if (downloadUpdate(it, manifest, client)) hazirGuncelleme = it }
                 } else {
                     byId[id]?.let { fetch(it, manifest, client) }
                 }
@@ -364,6 +475,7 @@ class SyncService : Service() {
                 config.lastError = "indirme hatasi ($id): ${e.message}"
             }
         }
+        return hazirGuncelleme
     }
 
     private suspend fun isReady(item: ManifestItem): Boolean =
@@ -397,7 +509,12 @@ class SyncService : Service() {
         return RolloutGroup.of(config.deviceId, groups) <= update.rolloutGroup
     }
 
-    private suspend fun applyUpdate(update: AppUpdate, manifest: PlayManifest, client: OkHttpClient) {
+    /**
+     * APK'yi indir - KURMA.
+     * Kurulum sureci oldurdugu icin pencerenin en sonuna birakiliyor (bkz. runSync).
+     * @return APK diskte ve dogrulanmis mi
+     */
+    private suspend fun downloadUpdate(update: AppUpdate, manifest: PlayManifest, client: OkHttpClient): Boolean {
         val result = downloader.ensure(
             sha = update.sha256,
             remotePath = update.remotePath,
@@ -408,8 +525,7 @@ class SyncService : Service() {
             parallel = manifest.policy.parallelChunks,
             stillRunning = ::stillRunning
         )
-        if (result != Downloader.Result.READY) return
-        Updater(this, config, store).install(update)
+        return result == Downloader.Result.READY
     }
 
     private fun stillRunning(): Boolean = running && (job?.isActive ?: false) && scope.isActive
@@ -444,6 +560,10 @@ class SyncService : Service() {
 
     companion object {
         private const val TAG = "SyncService"
+        /** Yuklenmis oynatma kayitlarinin cihazda tutuldugu sure. */
+        private const val LOG_SAKLAMA_MS = 30L * 24 * 3600 * 1000
+        /** Bunun altinda indirme pratikte imkansiz - panelde gorunsun. */
+        private const val DISK_ALT_SINIR = 200L * 1024 * 1024
         private const val CHANNEL = "senkron"
         private const val NOTIF_ID = 1001
         const val EXTRA_NETWORK = "network"

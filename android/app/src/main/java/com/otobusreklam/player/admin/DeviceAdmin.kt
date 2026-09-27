@@ -150,6 +150,24 @@ class DeviceAdmin(private val context: Context) {
         }
     }
 
+    /**
+     * SISTEM SAATINI YAZ.
+     *
+     * Neden gerekli: ClockManager'dan gecen damgalar dogru olur ama GECMEYEN her sey
+     * sistem saatini kullanir - Room alanlari, dosya zaman damgalari, logcat, TLS
+     * gecerlilik kontrolu. Bu cihazlarda pil destekli RTC yok; guc kesintisinden sonra
+     * sistem saati 1970'e duser ve saha teshisi imkansizlasir.
+     *
+     * API 28+ ve yalnizca cihaz sahibi icin. Otomatik zaman acikken sistem reddeder;
+     * o durumda zaten bir sorun yok.
+     */
+    fun setTime(epochMs: Long): Boolean {
+        if (!isDeviceOwner) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+        return runCatching { dpm?.setTime(admin, epochMs) == true }
+            .getOrElse { Log.w(TAG, "sistem saati yazilamadi: ${it.message}"); false }
+    }
+
     /** Gece kontrollu yeniden baslatma ve watchdog son caresi. */
     fun reboot(): Boolean {
         if (!isDeviceOwner) return false

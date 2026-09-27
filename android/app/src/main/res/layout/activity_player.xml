@@ -17,6 +17,28 @@
         app:shutter_background_color="@android:color/black" />
 
     <!--
+      EKRAN BOS uyarisi.
+
+      Neden ekranda: "oynatilacak icerik yok" durumu heartbeat ile panele gidiyor ama
+      panel ancak cihaz senkron OLABILDIGINDE guncellenir - oysa ekranin bos kalmasinin
+      en yaygin sebebi tam olarak senkron olamamaktir. Siyah ekran otobuse cikan kisiye
+      hicbir sey soylemez: cihaz mi bozuk, kablo mu cikmis, icerik mi inmemis? Bu bir
+      satir o ziyareti tek basina cozer. Gecerli bir liste gelince kaldirilir, yani
+      reklamin uzerinde asla kalmaz.
+    -->
+    <TextView
+        android:id="@+id/bos"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:padding="24dp"
+        android:textSize="18sp"
+        android:textColor="#FFFFFF"
+        android:visibility="gone"
+        tools:ignore="HardcodedText" />
+
+    <!--
       Teshis katmani. Normalde GORUNMEZ.
       Uzaktan bir komutla veya uzun basisla acilir; sahada teknikerin "bu cihaz
       hangi surumde, en son ne zaman senkron oldu" sorusunu ekrandan cevaplar.

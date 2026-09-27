@@ -126,6 +126,28 @@ test('manifest imzali gelir ve imza dogrulanir', async () => {
   assert.equal(m.items[0].id, 'kahve-30')
   assert.equal(m.items[0].chunks.length, 5)
   assert.equal(m.policy.parallelChunks, 2)
+
+  /*
+   * SAAT DILIMI IMZALI GOVDEDE OLMAK ZORUNDA.
+   *
+   * Daypart ("07:00-10:00") bu dilime gore uygulanir. Cihaz onceden kendi dilimini
+   * kullaniyordu; ucuz stick'lerde bu genelde UTC'dir ve Turkiye icin 3 SAAT kayma
+   * demektir - sabah kusagi icin satilan reklam ogleden sonra doner. Deger imzanin
+   * ICINDE: aksi halde aga erisen biri onu degistirip yayin saatini kaydirabilirdi.
+   */
+  assert.ok(m.timezone, 'manifest saat dilimi tasimali')
+  assert.equal(m.timezone, 'Europe/Istanbul')
+
+  /*
+   * IMZALI serverTime ZORUNLU.
+   *
+   * Cihazin GUVENILIR saat capasi yalnizca bu alandan kurulur. Date basligi imzanin
+   * disindadir ve yalnizca ZAYIF capa yapar (1970 damgasini duzeltir, bitis tarihi
+   * zorlamasini etkilemez). Bu alan kaybolursa hicbir cihaz bir daha guvenilir saate
+   * ulasamaz, yani tarihli TUM kampanyalar sessizce yayindan duser.
+   */
+  assert.ok(m.serverTime, 'imzali serverTime zorunlu')
+  assert.ok(Math.abs(Date.parse(m.serverTime) - Date.now()) < 60_000, 'serverTime taze olmali')
 })
 
 test('kurcalanmis manifest imzasi REDDEDILIR', async () => {

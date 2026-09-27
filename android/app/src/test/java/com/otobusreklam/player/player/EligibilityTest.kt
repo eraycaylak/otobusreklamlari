@@ -68,12 +68,37 @@ class EligibilityTest {
         assertFalse(uygunMu(clockTrusted = false, validFrom = null))
     }
 
-    @Test fun `EVERGREEN her kosulda oynar`() {
-        // Ekranin kararmamasi her seyden onemli
+    @Test fun `EVERGREEN tarihlere bakmaz`() {
+        // Ekranin kararmamasi her seyden onemli: evergreen'in suresi yoktur
         assertTrue(uygunMu(evergreen = true, clockTrusted = false))
         assertTrue(uygunMu(evergreen = true, validUntil = null))
         assertTrue(uygunMu(evergreen = true, validUntil = gun(1)))
-        assertTrue(uygunMu(evergreen = true, dayparts = "23:00-23:30"))
+        assertTrue(uygunMu(evergreen = true, validFrom = gun(30)))
+    }
+
+    /**
+     * Sunucu evergreen kampanyalar icin de `dayparts` gonderiyor ve panelde bu alan
+     * doldurulabiliyor. Onceden kural KAYDEDILIYOR, KABUL EDILIYOR ve HIC
+     * UYGULANMIYORDU: evergreen kosulsuz "uygun" sayiliyordu.
+     */
+    @Test fun `EVERGREEN daypart'a UYAR`() {
+        assertTrue(uygunMu(evergreen = true, dayparts = "07:00-10:00"))   // 08:30 icinde
+        assertFalse(uygunMu(evergreen = true, dayparts = "23:00-23:30"))  // 08:30 disinda
+    }
+
+    /**
+     * Saat supheliyken daypart'i DEGERLENDIREMEYIZ (gercek saati bilmiyoruz). O durumda
+     * evergreen kosulsuz oynar: ekranin son guvencesi odur. Yanlis saatle "araliga
+     * uymuyor" deyip ekrani karartmak, en kotu sonucu secmek olurdu.
+     */
+    @Test fun `saat supheliyken EVERGREEN daypart'a BAKMADAN oynar`() {
+        assertTrue(uygunMu(evergreen = true, clockTrusted = false, dayparts = "23:00-23:30"))
+    }
+
+    @Test fun `EVERGREEN daypart'i da saat dilimine gore degerlendirilir`() {
+        // 08:30 Istanbul = 05:30 UTC
+        assertTrue(Eligibility.isEligible(true, true, null, null, "07:00-10:00", simdi, zone))
+        assertFalse(Eligibility.isEligible(true, true, null, null, "07:00-10:00", simdi, ZoneId.of("UTC")))
     }
 
     @Test fun `daypart disinda oynamaz`() {

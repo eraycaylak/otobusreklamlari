@@ -51,6 +51,14 @@ data class PlayManifest(
     val deviceId: String,
     val deviceGroup: String,
     val serverTimeMs: Long?,
+    /**
+     * Daypart'in yorumlanacagi saat dilimi (IANA adi, orn. "Europe/Istanbul").
+     *
+     * SUNUCUDAN GELIR, cihazdan okunmaz: ZoneId.systemDefault() ucuz stick'lerde sik
+     * sik UTC'dir ve Turkiye icin bu 3 SAATLIK kaymadir - sabah kusagi icin satilan
+     * reklam ogleden sonra doner. Bos gelirse cihaz kendi dilimine duser (eski davranis).
+     */
+    val timezone: String,
     val items: List<ManifestItem>,
     val app: AppUpdate?,
     val policy: Policy,
@@ -68,6 +76,7 @@ object ManifestParser {
             deviceId = o.optString("deviceId", ""),
             deviceGroup = o.optString("deviceGroup", "default"),
             serverTimeMs = parseInstant(o.optString("serverTime", "")),
+            timezone = o.optString("timezone", ""),
             items = parseItems(o.optJSONArray("items")),
             app = o.optJSONObject("app")?.let(::parseApp),
             policy = parsePolicy(o.optJSONObject("policy")),

@@ -61,11 +61,37 @@ class FileStore(context: Context) {
         }
     }
 
-    /** Yarim dosyayi nihai konuma atomik tasi. */
+    /**
+     * Yarim dosyayi nihai konuma atomik tasi - VE TASIMAYI KALICI KIL.
+     *
+     * NEDEN DIZIN FSYNC'I SART:
+     * rename() cagrisi donmesi, yeni adin DISKE yazildigi anlamina GELMEZ; dizin
+     * girdisi bir sure yalnizca bellekte durur. Cagiran taraf hemen ardindan parca
+     * kayitlarini siliyor (indirme bitti). Tam o araliktaki bir guc kesintisinde -
+     * ki bu cihazlarda kontak kapanmasi normal hayat - iki yazinin sirasi ters
+     * duserdi: parca kayitlari GITMIS, dosya ise eski adinda ya da hic yok. Sonuc:
+     * %100 inmis bir dosya bastan indirilir. 3 dakikalik pencerede bu, o gunun
+     * tamamini bosa harcamak demektir.
+     *
+     * Android'de dizin fsync'i icin Os.fsync kullaniyoruz; desteklenmeyen bir ROM'da
+     * sessizce eski davranisa donuyoruz (o durumda da veri kaybi yok, sadece maliyet).
+     */
     fun promote(part: File, target: File): Boolean {
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
-        return part.renameTo(target)
+        if (!part.renameTo(target)) return false
+        syncDir(target.parentFile)
+        syncDir(part.parentFile)
+        return true
+    }
+
+    /** Dizin girdilerini diske indir. Desteklenmiyorsa sessizce gec. */
+    private fun syncDir(dir: File?) {
+        if (dir == null) return
+        runCatching {
+            val fd = android.system.Os.open(dir.absolutePath, android.system.OsConstants.O_RDONLY, 0)
+            try { android.system.Os.fsync(fd) } finally { android.system.Os.close(fd) }
+        }
     }
 
     fun sha256(file: File): String {

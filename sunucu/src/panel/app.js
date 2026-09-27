@@ -82,7 +82,7 @@ async function refresh () {
       <td title="son senkron penceresinde inen bayt">${pencere}</td>
       <td>${d.freeBytes != null ? (d.freeBytes / 1e9).toFixed(1) + ' GB' : '–'}</td>
       <td>${d.rssi != null ? Number(d.rssi) + ' dBm' : '–'}</td>
-      <td>${d.clockTrusted === false ? '<span style="color:var(--bad)">şüpheli</span>' : d.clockTrusted === true ? 'iyi' : '–'}</td>
+      <td title="${esc(d.clockNote || '')}">${d.clockTrusted === false ? `<span style="color:var(--bad)">şüpheli</span><div class="dim">${esc(String(d.clockNote || '').slice(0, 28))}</div>` : d.clockTrusted === true ? 'iyi' : '–'}</td>
       <td class="dim">${esc(String(d.lastError || '').slice(0, 60))}</td>
     </tr>`
   }).join('')

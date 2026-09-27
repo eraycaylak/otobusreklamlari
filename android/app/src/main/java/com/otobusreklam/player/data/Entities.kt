@@ -66,7 +66,14 @@ data class ChunkEntity(
  * Oynatma kaydi. seq OTOMATIK ARTAR ve kalicidir; sunucu tekrarlari (device, seq)
  * ile eler. ACK gelmeden satir SILINMEZ.
  */
-@Entity(tableName = "play_log", indices = [Index("uploaded")])
+/*
+ * Indeks (uploaded, seq): pending() sorgusu "WHERE uploaded = 0 ORDER BY seq" dir.
+ * Yalnizca (uploaded) uzerindeki indeks WHERE'i karsilar ama siralamayi karsilamaz,
+ * yani SQLite her cagride gecici bir sirala adimi uretir. Bekleyen kayit sayisi
+ * senkron olamayan bir cihazda on binlere cikabilir ve bu is tam da 3 dakikalik
+ * pencerenin icinde yapilir. Bilesik indeks sorguyu saf indeks taramasina cevirir.
+ */
+@Entity(tableName = "play_log", indices = [Index(value = ["uploaded", "seq"])])
 data class PlayLogEntity(
     @PrimaryKey(autoGenerate = true) val seq: Long = 0,
     val itemId: String,

@@ -13,11 +13,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -33,10 +34,11 @@ import java.util.concurrent.atomic.AtomicLong
  *   - hangi parcalarin indigi veritabanina yazilir (fsync ile)
  *   - sonraki ziyarette SADECE eksik parcalar, kaldigi bayttan istenir
  *
- * Dogrulama iki katmanli:
- *   1) her parca kendi SHA-256'si ile (bozuk parca sessizce yazilmaz)
- *   2) tamamlaninca tum dosyanin SHA-256'si ile
- * Ikisi de gecmeden dosya content/ dizinine (yani oynatma listesine) GIRMEZ.
+ * Dogrulama uc katmanli:
+ *   1) HTTP yaniti: 206 + Content-Range/Content-Length beklenen araligi gostermeli
+ *   2) her parca kendi SHA-256'si ile (bozuk parca sessizce yazilmaz)
+ *   3) tamamlaninca tum dosyanin SHA-256'si ile
+ * Hepsi gecmeden dosya content/ dizinine (yani oynatma listesine) GIRMEZ.
  */
 class Downloader(
     private val store: FileStore,
@@ -82,16 +84,28 @@ class Downloader(
         val target = store.contentFile(sha, remotePath)
 
         /*
-         * PARCA LISTESI DOSYAYI TAM KAPSIYOR MU?
+         * PARCA LISTESI DOSYAYI TAM KAPSIYOR MU? PARCALAR MAKUL BOYUTTA MI?
          *
          * Kapsamiyorsa (sunucu hatasi, kirpilmis manifest) tum parcalar "indi" olur,
          * tam dosya hash'i TUTMAZ, dosya bastan indirilir - ve bu SONSUZA KADAR
          * tekrarlanir. Her pencerede tum bant genisligi ayni dosyaya harcanir ve
-         * hicbir icerik guncellenemez. Bir kez basta kontrol etmek bunu kapatiyor.
+         * hicbir icerik guncellenemez.
+         *
+         * Boyut ust siniri da ZORUNLU: her parca tamamen BELLEGE aliniyor (hash'i
+         * yazmadan once dogrulanmali). Manifestteki bir `len` degeri 500 MB olsa
+         * ByteArray(len) OutOfMemoryError firlatir - ve OOM bir Error'dur, alttaki
+         * `catch (e: Exception)` bloklarinin HICBIRI onu tutmaz: kiosk uygulamasi
+         * ekrani karartarak coker. Bu yuzden basta reddediyoruz.
          */
         val kapsam = chunks.sumOf { it.len.toLong() }
-        if (chunks.isEmpty() || kapsam != size) {
-            sonHata = "manifest parca listesi bozuk: ${chunks.size} parca $kapsam bayt, beklenen $size"
+        val buyukParca = chunks.firstOrNull { it.len <= 0 || it.len > MAX_PARCA }
+        if (chunks.isEmpty() || kapsam != size || buyukParca != null) {
+            sonHata = when {
+                buyukParca != null ->
+                    "manifest parca boyutu kabul edilemez: idx=${buyukParca.index} len=${buyukParca.len} (sinir $MAX_PARCA)"
+                else ->
+                    "manifest parca listesi bozuk: ${chunks.size} parca $kapsam bayt, beklenen $size"
+            }
             Log.e(TAG, sonHata!!)
             db.contents().upsert(
                 ContentEntity(sha, remotePath, size, ContentState.BAD, System.currentTimeMillis())
@@ -119,6 +133,19 @@ class Downloader(
             return@withContext Result.FAILED
         }
 
+        /*
+         * YARIM DOSYANIN UZUNLUGU, RAF ACILMADAN ONCE OKUNUYOR.
+         *
+         * Asagida RandomAccessFile setLength(size) ile dosyayi tam boyuta genisletiyor.
+         * Onceden tutarsizlik kontrolu (parcalar "indi" ama dosya yok) RAF'tan SONRA
+         * `part.length() != size` diye yapiliyordu - o noktada uzunluk HER ZAMAN size'a
+         * esit oldugu icin kosul asla saglanamiyordu: OLU KOD. Yani "diski birisi
+         * temizledi ama veritabani parcalari indi saniyor" durumu hic yakalanmiyor,
+         * dosya sessizce SIFIRLARLA doluyor ve ancak tam dosya hash'inde patliyordu.
+         */
+        val part = store.partFile(sha)
+        val oncekiUzunluk = runCatching { if (part.exists()) part.length() else 0L }.getOrDefault(0L)
+
         // Parca kayitlarini hazirla. Manifest degistiyse (ayni sha farkli parcalama)
         // kayitlari sifirla - sha ayni oldugu surece bu pratikte olmaz ama savunmaci davranalim.
         val existing = db.chunks().forContent(sha)
@@ -139,14 +166,13 @@ class Downloader(
          * bunu tekrarlar. Onceden bu durum kalici ve GORUNMEZ bir kilitlenmeydi.
          */
         val bosAlan = store.freeBytes()
-        val gereken = size - part0Uzunlugu(sha)
+        val gereken = size - oncekiUzunluk
         if (bosAlan in 0 until (gereken + DISK_MARJI)) {
             sonHata = "disk dolu: ${bosAlan / 1_000_000} MB bos, ${gereken / 1_000_000} MB gerekiyor"
             Log.e(TAG, sonHata!!)
             return@withContext Result.FAILED
         }
 
-        val part = store.partFile(sha)
         val raf = try {
             RandomAccessFile(part, "rw").apply { if (length() != size) setLength(size) }
         } catch (e: Exception) {
@@ -158,9 +184,11 @@ class Downloader(
         try {
             var pending = db.chunks().pending(sha)
 
-            // Tutarsiz durum: tum parcalar "indi" isaretli ama yarim dosya yok
-            // (ornegin diski temizleyen biri). Bastan indirmek icin sifirla.
-            if (pending.isEmpty() && part.length() != size) {
+            // Tutarsiz durum: tum parcalar "indi" isaretli ama yarim dosya yok veya
+            // kirpilmis (ornegin diski temizleyen biri, ya da bozuk bir kapanma).
+            // RAF ACILMADAN ONCE okunan uzunluga bakiyoruz - bkz. yukaridaki not.
+            if (pending.isEmpty() && oncekiUzunluk != size) {
+                Log.w(TAG, "parcalar indi isaretli ama dosya $oncekiUzunluk/$size - bastan indirilecek")
                 db.chunks().reset(sha, chunks.map {
                     ChunkEntity(sha, it.index, it.offset, it.len, it.sha256, done = false)
                 })
@@ -208,11 +236,18 @@ class Downloader(
             runCatching { raf.close() }
         }
 
+        // Pencere kapandiysa BURADA DUR: asagisi tum dosyayi okuyup hash'liyor
+        // (50 MB'da saniyeler) ve ardindan dosyayi tasiyor. Iptal edilmis bir oturumun
+        // yayin listesini degistirmesi dogru degil; ilerleme diskte, sonraki ziyarette
+        // dogrulama bir sonraki turda saniyeler icinde yapilir.
+        if (!stillRunning()) return@withContext Result.PARTIAL
+
         // Tum parcalar indi -> tam dosya dogrulamasi
         val actual = store.sha256(part)
         if (!actual.equals(sha, ignoreCase = true)) {
             // Parcalar tek tek dogrulandigi halde butun tutmuyorsa yazma sirasinda
             // bir sey bozulmus demektir. Bastan indir.
+            sonHata = "tam dosya hash tutmadi ($remotePath) - bastan indirilecek"
             Log.e(TAG, "TAM DOSYA HASH TUTMADI, bastan indirilecek: $sha != $actual")
             part.delete()
             db.chunks().reset(sha, chunks.map {
@@ -223,11 +258,20 @@ class Downloader(
         }
 
         if (!store.promote(part, target)) {
+            sonHata = "dosya nihai konuma tasinamadi: $remotePath"
             Log.e(TAG, "dosya tasinamadi: $sha")
             return@withContext Result.FAILED
         }
+        /*
+         * SIRA ONEMLI: promote() ICINDE dizin fsync'i yapiliyor, yani buraya
+         * geldigimizde yeni ad DISKTE. Ancak ondan sonra devam bilgisini silebiliriz;
+         * ters sirada bir guc kesintisi "parca kayitlari yok + dosya da yok" durumu
+         * yaratir ve %100 inmis dosya bastan indirilir.
+         */
         db.chunks().clear(sha)
         db.contents().setState(sha, ContentState.READY, System.currentTimeMillis())
+        // Yeni bir kodlama indi: oynatma hatasi sayaci bu dosya icin anlamsiz.
+        db.contents().clearFail(sha)
         Log.i(TAG, "hazir: $remotePath")
         Result.READY
     }
@@ -239,51 +283,95 @@ class Downloader(
      * veya onbellek kutusu). O govdeyi parcanin offset'ine yazmak dosyayi BOZARDI;
      * bu yuzden cok parcali dosyalarda 200 kabul edilmez.
      */
-    private fun fetchChunk(
+    private suspend fun fetchChunk(
         url: String,
         chunk: ChunkEntity,
         totalChunks: Int,
         raf: RandomAccessFile,
         client: OkHttpClient
     ): Boolean {
-        val response = client.newCall(Http.range(url, chunk.offset, chunk.len)).execute()
-        response.use {
-            val singleChunkWholeFile = totalChunks == 1 && chunk.offset == 0L
-            if (it.code != 206 && !(it.code == 200 && singleChunkWholeFile)) {
-                Log.w(TAG, "beklenmeyen kod ${it.code} (Range destegi yok mu?) $url")
-                return false
-            }
-            val body = it.body ?: return false
-            val bytes = readExactly(body.byteStream(), chunk.len) ?: return false
+        val call = client.newCall(Http.range(url, chunk.offset, chunk.len))
 
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(bytes)
-                .joinToString("") { b -> "%02x".format(b) }
-            if (!digest.equals(chunk.chunkSha, ignoreCase = true)) {
-                Log.w(TAG, "parca hash tutmadi idx=${chunk.idx}")
-                return false
-            }
-
-            // Mutlak konumlu yazma: FileChannel.write(buffer, position) kanal konumunu
-            // degistirmez, bu yuzden farkli offset'lere paralel yazmak guvenlidir.
-            //
-            // DIKKAT: write() TAM yazmayi GARANTI ETMEZ; sozlesmeye gore daha az bayt
-            // yazabilir. Tek cagri yapsaydik parca "indi" isaretlenirken dosyada DELIK
-            // kalirdi; tam dosya hash'i bunu yakalar ama bedeli dosyanin bastan
-            // indirilmesidir - ve 3 dakikalik pencerede bu cok pahali.
-            val buf = ByteBuffer.wrap(bytes)
-            var yazilan = 0
-            while (buf.hasRemaining()) {
-                val n = raf.channel.write(buf, chunk.offset + yazilan)
-                if (n <= 0) {
-                    Log.w(TAG, "parca ${chunk.idx} diske yazilamadi (yazilan=$yazilan/${chunk.len})")
+        /*
+         * IPTAL EDILEN PENCERE, ACIK SOKETI DE KAPATMALI.
+         *
+         * OkHttp'nin execute()'u BLOKLAYICIDIR ve coroutine iptaline duyarli degildir:
+         * otobus noktadan ayrildiginda senkron isi iptal edilir ama bu is parcacigi
+         * okuma zaman asimi (15 sn) dolana kadar olu bir baglantida bekler. parallel=2
+         * ile bu, pencerenin son saniyelerinde iki is parcaciginin bosa harcanmasi ve
+         * on plan servisinin gereksiz uzun yasamasi demek. Is iptal edildigi anda
+         * cagriyi da iptal ediyoruz.
+         */
+        val kanca = currentCoroutineContext().job.invokeOnCompletion { if (it != null) call.cancel() }
+        try {
+            call.execute().use {
+                val singleChunkWholeFile = totalChunks == 1 && chunk.offset == 0L
+                if (it.code != 206 && !(it.code == 200 && singleChunkWholeFile)) {
+                    Log.w(TAG, "beklenmeyen kod ${it.code} (Range destegi yok mu?) $url")
+                    if (it.code == 200) sonHata = "sunucu Range desteklemiyor (200 dondu): $url"
                     return false
                 }
-                yazilan += n
+
+                /*
+                 * YANIT GERCEKTEN ISTEDIGIMIZ ARALIK MI?
+                 *
+                 * Onceden yalnizca govdenin uzunluguna bakiliyordu. Yanlis araligi
+                 * (ornegin arada duran bir onbellegin kendi yorumu, ya da `Range`'i
+                 * kismen destekleyen bir proxy) dondurdugunde bu ancak parca hash'inde
+                 * anlasiliyordu - ve teshis edilemez bir "parca hash tutmadi" satiri
+                 * olarak goruluyordu. Sunucu ne dediyse ONCE onu kontrol ediyoruz;
+                 * hata mesaji da artik sebebi soyluyor.
+                 */
+                if (it.code == 206) {
+                    val cr = it.header("Content-Range").orEmpty()
+                    val beklenen = "bytes ${chunk.offset}-${chunk.offset + chunk.len - 1}/"
+                    if (cr.isNotBlank() && !cr.startsWith(beklenen)) {
+                        sonHata = "sunucu yanlis aralik dondu: istenen $beklenen, gelen $cr"
+                        Log.w(TAG, sonHata!!)
+                        return false
+                    }
+                }
+                val cl = it.body?.contentLength() ?: -1L
+                if (cl >= 0 && cl != chunk.len.toLong()) {
+                    sonHata = "govde uzunlugu beklenenden farkli: $cl != ${chunk.len} ($url)"
+                    Log.w(TAG, sonHata!!)
+                    return false
+                }
+
+                val body = it.body ?: return false
+                val bytes = readExactly(body.byteStream(), chunk.len) ?: return false
+
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest(bytes)
+                    .joinToString("") { b -> "%02x".format(b) }
+                if (!digest.equals(chunk.chunkSha, ignoreCase = true)) {
+                    Log.w(TAG, "parca hash tutmadi idx=${chunk.idx}")
+                    return false
+                }
+
+                // Mutlak konumlu yazma: FileChannel.write(buffer, position) kanal konumunu
+                // degistirmez, bu yuzden farkli offset'lere paralel yazmak guvenlidir.
+                //
+                // DIKKAT: write() TAM yazmayi GARANTI ETMEZ; sozlesmeye gore daha az bayt
+                // yazabilir. Tek cagri yapsaydik parca "indi" isaretlenirken dosyada DELIK
+                // kalirdi; tam dosya hash'i bunu yakalar ama bedeli dosyanin bastan
+                // indirilmesidir - ve 3 dakikalik pencerede bu cok pahali.
+                val buf = ByteBuffer.wrap(bytes)
+                var yazilan = 0
+                while (buf.hasRemaining()) {
+                    val n = raf.channel.write(buf, chunk.offset + yazilan)
+                    if (n <= 0) {
+                        Log.w(TAG, "parca ${chunk.idx} diske yazilamadi (yazilan=$yazilan/${chunk.len})")
+                        return false
+                    }
+                    yazilan += n
+                }
+                // Her parcadan sonra diske zorla: ani guc kesintisinde ilerleme kaybolmasin.
+                raf.channel.force(false)
+                return true
             }
-            // Her parcadan sonra diske zorla: ani guc kesintisinde ilerleme kaybolmasin.
-            raf.channel.force(false)
-            return true
+        } finally {
+            kanca.dispose()
         }
     }
 
@@ -298,13 +386,15 @@ class Downloader(
         return out
     }
 
-    /** Yarim dosyanin mevcut uzunlugu - ne kadar daha alan gerektigini hesaplamak icin. */
-    private fun part0Uzunlugu(sha: String): Long =
-        runCatching { store.partFile(sha).length() }.getOrDefault(0L)
-
     private companion object {
         const val TAG = "Downloader"
         /** Dosya boyutunun ustune biraktigimiz emniyet payi (veritabani, loglar, gecici dosyalar). */
         const val DISK_MARJI = 50L * 1024 * 1024
+        /**
+         * Tek parca icin kabul edilen en buyuk boyut.
+         * Parca tamamen bellege alindigi icin bu dogrudan bir BELLEK sinirdir.
+         * Sunucu 4 MB parca uretiyor; 16 MB bol pay birakir.
+         */
+        const val MAX_PARCA = 16 * 1024 * 1024
     }
 }

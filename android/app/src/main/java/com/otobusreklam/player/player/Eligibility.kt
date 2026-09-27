@@ -33,8 +33,24 @@ object Eligibility {
         nowMs: Long,
         zone: ZoneId
     ): Boolean {
-        // Evergreen her kosulda oynar: ekranin kararmamasi her seyden onemli
-        if (evergreen) return true
+        /*
+         * EVERGREEN: tarihi yoktur ama DAYPART'I VARDIR.
+         *
+         * Onceden burada kosulsuz `return true` vardi, yani evergreen bir kampanyaya
+         * tanimlanan saat araligi SESSIZCE YOK SAYILIYORDU - oysa sunucu evergreen
+         * kampanyalar icin de dayparts gonderiyor ve panelde bu alan doldurulabiliyor.
+         * Isletmeci "gece 23:00-06:00 arasi kurum tanitimi donsun" dediginde kural
+         * kaydediliyor, kabul ediliyor ve HIC UYGULANMIYORDU.
+         *
+         * Saat supheliyken daypart'i degerlendiremeyiz; o durumda evergreen kosulsuz
+         * oynar - ekranin kararmamasi her seyden onemlidir ve evergreen tam da bunun
+         * icin var. Hicbir evergreen araliga uymuyorsa PlaylistBuilder son kademede
+         * hepsini yine devreye alir, yani ekran hicbir kosulda bos kalmaz.
+         */
+        if (evergreen) {
+            if (!clockTrusted) return true
+            return Daypart.matches(dayparts, Instant.ofEpochMilli(nowMs).atZone(zone).toLocalTime())
+        }
 
         // Saat supheliyse tarihli hicbir sey oynatilamaz
         if (!clockTrusted) return false

@@ -39,6 +39,24 @@ android {
             "PROVISION_SECRET",
             "\"${project.findProperty("PROVISION_SECRET") ?: ""}\""
         )
+        /*
+         * BU YAZILIMIN VAR OLDUGU EN ERKEN AN.
+         *
+         * Saat capasi icin ZEMIN degeri: bundan onceki bir "sunucu zamani" fiziksel
+         * olarak imkansizdir, yani ya bozuk bir onbellek yaniti ya da kasitli bir
+         * saldiridir (bkz. ClockManager - geriye alinan saat suresi dolmus reklami
+         * diriltir). Iki durumda da reddedilmesi gerekir.
+         *
+         * SABIT tutuluyor, System.currentTimeMillis() DEGIL: her derlemede degisen
+         * bir deger Gradle onbellegini ve yeniden uretilebilirligi bozar. CI gercek
+         * derleme zamanini -PbuildTimeMs=... ile gecebilir; surum cikarken bu taban
+         * da guncellenir.
+         */
+        buildConfigField(
+            "long",
+            "BUILD_TIME_MS",
+            "${(project.findProperty("buildTimeMs") as String?)?.toLongOrNull() ?: 1788220800000L}L"
+        )
     }
 
     signingConfigs {

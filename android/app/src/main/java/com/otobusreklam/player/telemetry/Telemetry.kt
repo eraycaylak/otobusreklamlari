@@ -103,7 +103,19 @@ class Telemetry(
                         return
                     }
 
-                    db.playLog().markUploaded(ack)
+                    /*
+                     * ack, GONDERDIGIMIZ PARTININ USTUNE TASAMAZ.
+                     *
+                     * ackSeq imzasiz bir HTTP govdesinden geliyor. Sinirsiz
+                     * uygulandiginda tek bir buyuk deger (sunucu hatasi, bozuk onbellek
+                     * yaniti veya kotu niyet) henuz GONDERILMEMIS satirlari da
+                     * "yuklendi" yapar; temizlik turu onlari sildigi icin o otobusun
+                     * faturasi geri donusu olmayan bicimde kaybolur.
+                     */
+                    db.playLog().markUploaded(ackSeq = ack, batchMaxSeq = rows.last().seq)
+                    if (ack > rows.last().seq) {
+                        Log.w(TAG, "sunucu parti disi ack dondu (ack=$ack > son=${rows.last().seq}) - sinirlandi")
+                    }
                     Log.i(TAG, "${rows.size} log satiri yuklendi (ack=$ack)")
                 }
             } catch (e: Exception) {
@@ -121,6 +133,9 @@ class Telemetry(
         val bad = contents.count { it.state == ContentState.BAD }
         val hazirShalar = contents.filter { it.state == ContentState.READY }.map { it.sha256 }.toSet()
 
+        // Zaman ve guven TEK OKUMADA (bkz. ClockMath.Snapshot).
+        val saat = clock.snapshot()
+
         val body = JSONObject().apply {
             put("epoch", config.logEpoch)
             put("appVersion", BuildConfig.VERSION_CODE)
@@ -135,8 +150,10 @@ class Telemetry(
             put("freeBytes", store.freeBytes())
             put("rssi", wifiRssi())
             put("reboots", config.rebootCount)
-            put("clockTrusted", clock.trusted())
-            put("clockNote", clock.note)
+            put("clockTrusted", saat.trusted)
+            // Sebep + not: "saat supheli" tek basina hicbir mudahaleye yol gostermiyor.
+            put("clockNote", listOf(saat.reason, clock.note).filter { it.isNotBlank() }.joinToString(" / "))
+            put("timezone", config.timezone)
             put("sessionBytes", sessionBytes)
             put("pendingLogs", db.playLog().pendingCount())
             put("lastError", config.lastError)
@@ -170,15 +187,27 @@ class Telemetry(
      * belirtilmeli; ekranin gercekten calistigi saha denetimiyle dogrulanir.
      */
     suspend fun sendProofFrame(client: OkHttpClient) {
-        val now = clock.now()
+        val saat = clock.snapshot()
+        val now = saat.nowMs
         if (now - config.lastProofAt < PROOF_INTERVAL_MS) return
 
-        val last = db.playLog().lastPlayed() ?: return
+        /*
+         * Kanit karesi yalnizca YAKIN GECMISTEKI bir oynatma icin uretilir.
+         *
+         * Zaman siniri olmadan, ekran gunlerdir bos olsa bile (tum icerik BAD, disk
+         * dolu, liste bos) en son kayit bulunuyor ve uzerine GUNCEL zaman damgasi
+         * basiliyordu. Reklamverene "bu icerik su an oynuyor" izlenimi veren bir kanit,
+         * kanit olmamasindan daha kotudur: denetimde tum raporun guvenilirligini gotur.
+         */
+        val last = db.playLog().lastPlayed(since = now - KANIT_TAZELIK_MS) ?: run {
+            Log.i(TAG, "son ${KANIT_TAZELIK_MS / 3_600_000} saatte oynatma kaydi yok - kanit karesi uretilmedi")
+            return
+        }
         val content = db.contents().get(last.sha256) ?: return
         val file = store.contentFile(last.sha256, content.remotePath)
         if (!file.exists()) return
 
-        val jpeg = renderProof(file.absolutePath, last.itemId, now) ?: return
+        val jpeg = renderProof(file.absolutePath, last.itemId, now, saat.trusted) ?: return
 
         val request = Http.authed("${config.apiUrl}/api/v1/proof", config.token)
             .post(jpeg.toRequestBody("image/jpeg".toMediaType()))
@@ -189,7 +218,7 @@ class Telemetry(
         }.onFailure { Log.i(TAG, "kanit karesi gonderilemedi: ${it.message}") }
     }
 
-    private fun renderProof(path: String, itemId: String, now: Long): ByteArray? {
+    private fun renderProof(path: String, itemId: String, now: Long, clockTrusted: Boolean): ByteArray? {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(path)
@@ -209,7 +238,7 @@ class Telemetry(
             val canvas = Canvas(scaled)
             val text = "${config.deviceId} | $itemId | " +
                 Instant.ofEpochMilli(now).toString() +
-                if (clock.trusted()) "" else " | SAAT SUPHELI"
+                if (clockTrusted) "" else " | SAAT SUPHELI"
 
             val paint = Paint().apply {
                 color = Color.WHITE; textSize = 18f; isAntiAlias = true
@@ -244,5 +273,7 @@ class Telemetry(
         const val BATCH = 500
         const val PROOF_WIDTH = 640
         const val PROOF_INTERVAL_MS = 24L * 3600 * 1000   // gunde en fazla bir kare
+        /** Kanit karesi icin kabul edilen en eski oynatma kaydi. */
+        const val KANIT_TAZELIK_MS = 26L * 3600 * 1000
     }
 }

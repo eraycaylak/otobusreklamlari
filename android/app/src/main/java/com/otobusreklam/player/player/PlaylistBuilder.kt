@@ -1,13 +1,13 @@
 package com.otobusreklam.player.player
 
 import android.util.Log
+import com.otobusreklam.player.Config
 import com.otobusreklam.player.clock.ClockManager
 import com.otobusreklam.player.data.AppDatabase
 import com.otobusreklam.player.data.ContentState
 import com.otobusreklam.player.data.ItemEntity
 import com.otobusreklam.player.store.FileStore
 import java.io.File
-import java.time.ZoneId
 
 /**
  * Oynatma listesini kuran bilesen. Uc kurali ayni anda uygular:
@@ -18,7 +18,8 @@ import java.time.ZoneId
 class PlaylistBuilder(
     private val store: FileStore,
     private val db: AppDatabase,
-    private val clock: ClockManager
+    private val clock: ClockManager,
+    private val config: Config
 ) {
 
     data class Entry(
@@ -39,16 +40,28 @@ class PlaylistBuilder(
         if (items.isEmpty()) return Result(emptyList(), "liste bos")
 
         val readyShas = db.contents().shasWithState(ContentState.READY).toSet()
-        val now = clock.now()
-        val clockOk = clock.trusted()
+        // Zaman ve guven TEK OKUMADA: ayri ayri sorulursa arada bir senkron gerceklesip
+        // ikisi tutarsiz olabilir (bkz. ClockMath.Snapshot).
+        val saat = clock.snapshot()
+        val now = saat.nowMs
+        val clockOk = saat.trusted
 
         val playable = items.filter { item ->
             val file = store.contentFile(item.sha256, item.remotePath)
             item.sha256 in readyShas && file.exists() && isEligible(item, now, clockOk)
         }
 
-        // Hicbir kampanya uygun degilse EVERGREEN'e dus.
-        // Ekranin siyah kalmasi her zaman en kotu sonuctur.
+        /*
+         * SON KADEME: hicbir sey uygun degilse TUM evergreen'ler devreye girer.
+         *
+         * Bu dal artik GERCEKTEN ulasilabilir. Onceden evergreen kosulsuz "uygun"
+         * sayildigi icin (daypart yok sayiliyordu) hazir bir evergreen varsa o zaten
+         * `playable` icinde oluyordu ve buraya hic dusulmuyordu: olu kod. Evergreen
+         * artik daypart'a uydugu icin, "gece kusagi" tanimli bir evergreen gunduz
+         * elenir - ve baska hicbir sey yoksa ekranin kararmamasi adina BURADA geri
+         * gelir. Ekranin bos kalmasi her zaman en kotu sonuctur.
+         */
+        val sonKademe = playable.isEmpty()
         val chosen = playable.ifEmpty {
             items.filter {
                 it.evergreen &&
@@ -59,17 +72,43 @@ class PlaylistBuilder(
 
         if (chosen.isEmpty()) {
             Log.e(TAG, "OYNATILACAK ICERIK YOK - ekran siyah kalacak")
-            return Result(emptyList(), "oynatilacak icerik yok")
+            return Result(emptyList(), neden(items, readyShas, clockOk))
         }
 
         val kampanyaSayisi = playable.count { !it.evergreen }
         val reason = when {
-            !clockOk -> "saat SUPHELI -> sadece evergreen (${chosen.size})"
-            kampanyaSayisi > 0 -> "normal (${kampanyaSayisi} kampanya + ${playable.size - kampanyaSayisi} evergreen)"
+            sonKademe && !clockOk -> "saat SUPHELI + uygun icerik yok -> tum evergreen (${chosen.size})"
+            sonKademe -> "hicbiri uygun degil -> tum evergreen (${chosen.size})"
+            !clockOk -> "saat SUPHELI (${saat.reason}) -> sadece evergreen (${chosen.size})"
+            kampanyaSayisi > 0 -> "normal ($kampanyaSayisi kampanya + ${playable.size - kampanyaSayisi} evergreen)"
             else -> "uygun kampanya yok -> evergreen (${chosen.size})"
         }
 
         return Result(interleaveByWeight(chosen), reason)
+    }
+
+    /**
+     * Ekran neden bos - AYRINTILI.
+     *
+     * "oynatilacak icerik yok" tek basina hicbir seye yaramiyordu: sebep indirilememis
+     * icerik mi, oynatilamayan (BAD) kodek mi, suresi bitmis kampanyalar mi, yoksa
+     * hic evergreen tanimlanmamis olmasi mi? Ucu de farkli mudahale gerektiriyor ve
+     * bu metin heartbeat ile panele gidiyor.
+     */
+    private suspend fun neden(items: List<ItemEntity>, readyShas: Set<String>, clockOk: Boolean): String {
+        val contents = db.contents().all()
+        val bad = contents.count { it.state == ContentState.BAD }
+        val inmeyen = items.count { it.sha256 !in readyShas }
+        val evergreenVar = items.any { it.evergreen }
+        return buildString {
+            append("oynatilacak icerik yok")
+            append(" (${items.size} oge")
+            if (inmeyen > 0) append(", $inmeyen inmemis")
+            if (bad > 0) append(", $bad oynatilamiyor")
+            if (!evergreenVar) append(", EVERGREEN TANIMLI DEGIL")
+            if (!clockOk) append(", saat supheli")
+            append(")")
+        }
     }
 
     /**
@@ -87,7 +126,10 @@ class PlaylistBuilder(
             validUntil = item.validUntil,
             dayparts = item.dayparts,
             nowMs = now,
-            zone = ZoneId.systemDefault()
+            // Dilim SUNUCUDAN gelir. ZoneId.systemDefault() bu cihazlarda tipik olarak
+            // dokunulmamis ROM varsayilanidir (sik sik UTC) ve Turkiye icin 3 saatlik
+            // kayma demektir: sabah kusagi icin satilan reklam ogleden sonra doner.
+            zone = config.zoneId
         )
 
     /**

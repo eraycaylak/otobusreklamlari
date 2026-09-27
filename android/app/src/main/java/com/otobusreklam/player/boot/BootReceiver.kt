@@ -44,14 +44,26 @@ class BootReceiver : BroadcastReceiver() {
          */
         config.startupFailures = 0
 
-        // Monotonik saat capasi acilista gecersizdir.
-        // Saat guvenilmez -> bitis tarihli icerik oynatilmaz, evergreen'e dusulur.
+        /*
+         * Saat capasi: KOSULSUZ SILINMIYOR.
+         *
+         * BOOT_COMPLETED yayini HOME aktivitesinden SONRA gelir. Yani bu alici
+         * calistiginda oynatici acilmis, WiFi gelmis ve senkron TAZE bir capa almis
+         * olabilir. Eskiden burada kosulsuz invalidate ediliyordu ve o taze capa cope
+         * atiliyordu: cihaz, senkronu basariyla tamamlamisken saatini "supheli"
+         * sayip yalnizca evergreen oynamaya baslardi.
+         *
+         * onBoot() artik capanin BU acilista alinip alinmadigina bakiyor
+         * (Settings.Global.BOOT_COUNT); yeniden baslatma zaten oradan tespit ediliyor.
+         */
         ClockManager(context).onBoot()
 
-        DeviceAdmin(context).apply {
-            applyPolicies()
-            ensureWifi(config.ssid, config.psk)
-        }
+        val admin = DeviceAdmin(context)
+        admin.applyPolicies()
+        admin.ensureWifi(config.ssid, config.psk)
+        // Guvenilir capa varsa sistem saatini de onar: ClockManager'dan GECMEYEN
+        // tum damgalar (Room, dosya tarihleri, logcat, TLS) boylece anlamli olur.
+        ClockManager(context).repairSystemClock(admin::setTime)
 
         SyncWorker.schedule(context)
     }
