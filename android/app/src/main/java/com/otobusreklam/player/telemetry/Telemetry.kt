@@ -16,6 +16,7 @@ import com.otobusreklam.player.clock.ClockManager
 import com.otobusreklam.player.data.AppDatabase
 import com.otobusreklam.player.data.ContentState
 import com.otobusreklam.player.manifest.PlayManifest
+import com.otobusreklam.player.player.PlaylistBuilder
 import com.otobusreklam.player.net.Http
 import com.otobusreklam.player.store.FileStore
 import okhttp3.MediaType.Companion.toMediaType
@@ -48,9 +49,28 @@ class Telemetry(
      * Oynatma loglari.
      * ACK ALINMADAN SATIR SILINMEZ; sunucu tekrarlari (cihaz, seq) ile eler.
      * Boylece pencere ortasinda kopan baglanti log kaybina yol acmaz.
+     *
+     * ZAMAN BUTCESI VAR - HEARTBEAT'IN ONUNU KESMEMESI ICIN.
+     *
+     * Dongu eskiden `while (true)` idi ve yalnizca "satir kalmadi" ya da "ack
+     * ilerlemiyor" durumunda duruyordu. Uzun sure senkron olamamis bir cihazda birikmis
+     * binlerce satir, 3 dakikalik pencerenin TAMAMINI yiyebiliyordu - ve heartbeat
+     * ONDAN SONRA gonderildigi icin hic gitmiyordu: yani panelde "en cok sorunlu"
+     * cihaz "hic konusmuyor" olarak gorunuyordu, oysa her pencerede konusmaya
+     * CALISIYORDU. Tam da teshise en cok ihtiyac duyulan cihazda sinyal kayboluyordu.
+     *
+     * Butce asilirsa kalan satirlar CIHAZDA KALIR (kaybolmaz, ACK almadilar) ve bir
+     * sonraki pencerede devam eder; kalan sayi heartbeat'teki `pendingLogs` ile
+     * panele gider.
      */
-    suspend fun uploadLogs(client: OkHttpClient) {
+    suspend fun uploadLogs(client: OkHttpClient, butceMs: Long = LOG_BUTCE_MS) {
+        val bitis = android.os.SystemClock.elapsedRealtime() + butceMs
         while (true) {
+            if (android.os.SystemClock.elapsedRealtime() > bitis) {
+                val kalan = db.playLog().pendingCount()
+                Log.w(TAG, "log yukleme butcesi doldu (${butceMs / 1000} sn), $kalan satir sonraki pencereye kaldi")
+                return
+            }
             val rows = db.playLog().pending(BATCH)
             if (rows.isEmpty()) return
 
@@ -75,7 +95,7 @@ class Telemetry(
                 GZIPOutputStream(out).use { it.write(ndjson.toByteArray(Charsets.UTF_8)) }
             }.toByteArray()
 
-            val request = Http.authed("${config.apiUrl}/api/v1/logs", config.token)
+            val request = Http.authed("${config.apiUrl}/api/v1/logs", config.token, config.deviceId)
                 .header("Content-Encoding", "gzip")
                 .post(gz.toRequestBody("application/x-ndjson".toMediaType()))
                 .build()
@@ -135,10 +155,31 @@ class Telemetry(
         val contents = db.contents().all()
         val ready = contents.count { it.state == ContentState.READY }
         val bad = contents.count { it.state == ContentState.BAD }
-        val hazirShalar = contents.filter { it.state == ContentState.READY }.map { it.sha256 }.toSet()
 
         // Zaman ve guven TEK OKUMADA (bkz. ClockMath.Snapshot).
         val saat = clock.snapshot()
+
+        /*
+         * OYNATILABILIR OGE SAYISI, OYNATMA LISTESINI KURAN KODUN KENDISINDEN GELIR.
+         *
+         * Eskiden burada `db.items().all().count { it.sha256 in hazirShalar }` yaziyordu:
+         * yani yalnizca DOSYASI INMIS oge sayisi. Uygunluk (validUntil, validFrom,
+         * daypart, saat guveni) HIC uygulanmiyordu - oysa gercek liste PlaylistBuilder'dan
+         * cikiyor ve o suzgeci uyguluyor. Iki farkli tanim, tek isim.
+         *
+         * Somut sonuc: bir otobuste 5 kampanya var, hepsinin dosyasi inmis, hicbiri
+         * evergreen degil ve dun hepsinin suresi bitti. PlaylistBuilder BOS liste doner,
+         * ekran SIYAH kalir. Heartbeat ise playableItems=5 gonderir; panel
+         * (`ekranBos = playableItems === 0`) cihazi YESIL gosterir ve "en yuksek
+         * oncelikli alarm" diye tanimlanan sinyal TAM GEREKTIGI ANDA yanmaz.
+         * Reklamveren parayi odedi, ekran gunlerce siyah kalir.
+         *
+         * Cozum, sayiyi ayni yerden uretmek: artik ayrisma MUMKUN DEGIL, cunku tek
+         * kaynak var. Listeyi kurmak ucuz (DB okumasi + dosya varlik kontrolu).
+         * `reason` de gonderiliyor: "0" tek basina ne yapilacagini soylemiyor.
+         */
+        val liste = PlaylistBuilder(store, db, clock, config).build()
+        val oynatilabilir = liste.entries.map { it.sha256 }.distinct().size
 
         val body = JSONObject().apply {
             put("epoch", config.logEpoch)
@@ -147,8 +188,17 @@ class Telemetry(
             put("playlistVersion", manifest.playlistVersion)
             put("readyItems", ready)
             put("badItems", bad)
-            // Oynatilabilir oge sayisi: 0 ise ekran BOS demektir, panelde kirmizi yansin
-            put("playableItems", db.items().all().count { it.sha256 in hazirShalar })
+            // Oynatilabilir oge sayisi: 0 ise ekran BOS demektir, panelde kirmizi yansin.
+            // DEGER LISTEYI KURAN KODUN KENDISINDEN GELIR (bkz. yukaridaki not).
+            put("playableItems", oynatilabilir)
+            /*
+             * LISTE NEDEN BOYLE - "0" tek basina mudahaleye yol gostermiyor.
+             *
+             * Ayrica bu alan lastError'dan AYRI: "EKRAN BOS" metni eskiden lastError
+             * uzerinden gidiyordu ve runSync her pencerenin BASINDA lastError'u
+             * siliyordu, yani sinyal bir yaris kosuluna bagliydi.
+             */
+            put("playlistReason", liste.reason)
             put("safeMode", config.safeMode)
             put("totalItems", manifest.items.size)
             put("freeBytes", store.freeBytes())
@@ -189,7 +239,7 @@ class Telemetry(
             put("androidSdk", Build.VERSION.SDK_INT)
         }
 
-        val request = Http.authed("${config.apiUrl}/api/v1/heartbeat", config.token)
+        val request = Http.authed("${config.apiUrl}/api/v1/heartbeat", config.token, config.deviceId)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -237,7 +287,7 @@ class Telemetry(
 
         val jpeg = renderProof(file.absolutePath, last.itemId, now, saat.trusted) ?: return
 
-        val request = Http.authed("${config.apiUrl}/api/v1/proof", config.token)
+        val request = Http.authed("${config.apiUrl}/api/v1/proof", config.token, config.deviceId)
             .post(jpeg.toRequestBody("image/jpeg".toMediaType()))
             .build()
 
@@ -311,6 +361,15 @@ class Telemetry(
     }
 
     private companion object {
+        /**
+         * Log yuklemesine ayrilan en fazla sure.
+         *
+         * Pencere ~3 dakika; heartbeat ve kanit karesi icin mutlaka yer kalmali.
+         * 45 sn, binlerce satirlik bir birikimi birkac pencerede eritmeye yeter ve
+         * hicbir pencerede teshis sinyalini kurban etmez.
+         */
+        const val LOG_BUTCE_MS = 45_000L
+
         const val TAG = "Telemetry"
         const val BATCH = 500
         const val PROOF_WIDTH = 640

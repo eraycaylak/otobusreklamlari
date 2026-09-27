@@ -40,7 +40,7 @@ MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
 ADMIN_TOKEN="uzun-rastgele-bir-dize" PORT=8080 npm start
 ```
 
-Testleri çalıştırın (70 test — Range ile devam eden indirme senaryosu, fatura kuralları ve güvenlik testleri dahil):
+Testleri çalıştırın (73 test — Range ile devam eden indirme senaryosu, fatura kuralları ve güvenlik testleri dahil):
 
 ```bash
 npm test
@@ -442,6 +442,41 @@ Otomatik:
 ```cron
 0 2 * * * /opt/reklam/sunucu/scripts/yedekle.sh >> /var/log/reklam-yedek.log 2>&1
 ```
+
+### Geri yükleme — yedek almak ile kurtarılabilir olmak aynı şey değil
+
+Yedek alan bir betik vardı ama **geri yüklemenin nasıl yapılacağı hiçbir yerde
+yazmıyordu ve hiç denenmemişti.** Felaket anında öğrenilen bir yordam, olmayan bir
+yordamdır. Şimdi bir betik var ve **kuru prova modu** ile hiçbir şeye dokunmadan
+ne yapacağını anlatıyor:
+
+```bash
+cd sunucu
+
+# 1) ÖNCE kuru prova: yedeği doğrular, içindekini sayar, planı yazdırır
+npm run geri-yukle -- yedekler/reklam-yedek-20260927-020000.tar.gz --kuru-prova
+
+# 2) Sahadaki APK ile eşleştiğini de doğrulayın (android/gradle.properties → MANIFEST_PUBLIC_KEY)
+npm run geri-yukle -- yedekler/reklam-yedek-....tar.gz --kuru-prova \
+  --acik-anahtar "6/TdGSMoBQltjmukWYRU178BwrG2AAQ+yU2FZ7HT9Rs="
+
+# 3) Gerçekten geri yükle (onay ister, mevcut veriyi yana alır)
+npm run geri-yukle -- yedekler/reklam-yedek-....tar.gz
+```
+
+Betik şunları **geri yüklemeden önce** kontrol eder:
+
+| Kontrol | Neden |
+|---|---|
+| tar okunabiliyor mu | Bozuk bir yedekle "kurtarıldım" sanmak en kötü durum |
+| `keys/*.pem` ve `db.json` içinde mi | Bu üçü olmadan kurtarma mümkün değil |
+| `db.json` ayrıştırılabiliyor mu, kaç cihaz var | Yanlış/boş yedeği fark etmek için |
+| Anahtar çifti birbiriyle eşleşiyor mu | Eşleşmeyen çiftle sunucu hiç açılmaz |
+| **Yedekteki açık anahtar, sahadaki APK'nınki mi** | Açık anahtar APK'ya **derleme zamanında** gömülü. Farklıysa tüm filo manifest imzasını reddeder — ve bunu geri yükledikten *sonra* öğrenmek, her otobüse tek tek gitmek demek |
+
+Mevcut veri dizini **silinmez**, `data.eski-<damga>` olarak yana alınır.
+`content/` (videolar) varsayılan yedekte yoktur; eksik videolar panelden yeniden
+yüklenir ve aynı sha256 ile indiklerinde kampanyalar kendiliğinden çalışır.
 
 ### Disk temizliği
 

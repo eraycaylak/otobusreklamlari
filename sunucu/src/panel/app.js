@@ -255,7 +255,10 @@ async function refresh () {
       <td>${d.freeBytes != null ? (d.freeBytes / 1e9).toFixed(1) + ' GB' : '–'}</td>
       <td>${d.rssi != null ? Number(d.rssi) + ' dBm' : '–'}</td>
       <td title="${esc(d.clockNote || '')}">${d.clockTrusted === false ? `<span style="color:var(--bad)">şüpheli</span><div class="dim">${esc(String(d.clockNote || '').slice(0, 28))}</div>` : d.clockTrusted === true ? 'iyi' : '–'}</td>
-      <td class="dim">${esc(String(d.lastError || '').slice(0, 60))}${
+      <td class="dim">${
+        // EKRAN BOS ise SEBEBI en onde: bu satirin tek isi operatore ne yapacagini soylemek.
+        ekranBos && d.playlistReason ? `<div style="color:var(--bad)">${esc(String(d.playlistReason).slice(0, 80))}</div>` : ''
+      }${esc(String(d.lastError || '').slice(0, 60))}${
         d.lastInstallError ? `<div style="color:var(--warn)">${esc(String(d.lastInstallError).slice(0, 60))}</div>` : ''
       }${
         d.policyErrors ? `<div style="color:var(--bad)">politika: ${esc(String(d.policyErrors).slice(0, 60))}</div>` : ''

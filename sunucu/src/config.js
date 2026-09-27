@@ -43,7 +43,32 @@ function sayi (ad, ham, varsayilan, { min, max, tamsayi = true, ipucu = '' } = {
   return d
 }
 
-export { sayi }
+/**
+ * SAAT DILIMI ACILISTA DOGRULANIR.
+ *
+ * Deger MANIFESTLE cihaza gidiyor ve cihaz `ZoneId.of(timezone)` basarisiz olursa
+ * SESSIZCE `ZoneId.systemDefault()`'a duser - yani ucuz stick'lerde tipik olarak
+ * UTC'ye. Turkiye icin bu 3 SAATLIK kayma demek: sabah kusagi icin satilan reklam
+ * ogleden sonra doner. Tam da bu kaymayi onlemek icin dilimi sunucudan gonderiyoruz;
+ * dogrulanmamis bir yazim hatasi (`Europe/Istanbol`) onlemin kendisini iptal eder ve
+ * hicbir yerde gorunmez.
+ */
+function saatDilimi (ham, varsayilan) {
+  const deger = (ham || '').trim() || varsayilan
+  try {
+    // Intl, IANA adini dogrular: gecersizse RangeError atar.
+    new Intl.DateTimeFormat('tr-TR', { timeZone: deger })
+  } catch {
+    throw new Error(
+      `TIMEZONE="${deger}" gecerli bir IANA saat dilimi degil. ` +
+      `Ornek: Europe/Istanbul. (Gecersiz deger cihazda sessizce UTC'ye duserdi: ` +
+      `sabah kusagi reklami ogleden sonra donerdi.)`
+    )
+  }
+  return deger
+}
+
+export { sayi, saatDilimi }
 
 export const config = {
   port: sayi('PORT', process.env.PORT, 8080, { min: 1, max: 65535 }),
@@ -108,7 +133,7 @@ export const config = {
    * dokunmadigi bir ROM varsayilanidir ve ucuz stick'lerde sik sik UTC cikar - yani
    * sabah kusagi reklami ogleden sonra doner. Sunucu tek kaynak olmali.
    */
-  timezone: process.env.TIMEZONE || 'Europe/Istanbul',
+  timezone: saatDilimi(process.env.TIMEZONE, 'Europe/Istanbul'),
 
   /*
    * Onumuzde kac GUVENILIR vekil var (nokta onbellek kutusu, ters vekil)?

@@ -8,6 +8,13 @@ import { safeEqual } from '../crypto.js'
 import { tooManyFailures, noteFailure, noteSuccess, tokenFingerprint } from '../guard.js'
 import { paths } from '../config.js'
 
+/**
+ * Acilmis log govdesi icin ust sinir (sikistirma bombasina karsi).
+ * Bir oynatma log satiri ~200 bayt; 16 MB, bir cihazin ACK beklerken
+ * biriktirebilecegi her seyi fazlasiyla asar.
+ */
+const MAX_LOG_ACILMIS = Number(process.env.MAX_LOG_BYTES || 16 * 1024 * 1024)
+
 export const deviceRouter = express.Router()
 
 /**
@@ -39,6 +46,28 @@ export function auth (req, res, next) {
     return res.status(401).json({ error: 'token gecersiz' })
   }
   if (device.revoked) return res.status(403).json({ error: 'cihaz iptal edilmis' })
+
+  /*
+   * X-Cihaz BASLIGI TOKENIN SAHIBIYLE ESLESMEK ZORUNDA.
+   *
+   * Cihaz bu basligi, nokta onbellek kutusunun manifest onbellegini CIHAZ BASINA
+   * bolumlemesi icin gonderiyor (anahtarda ham token yerine cihaz kimligi durur -
+   * nginx onbellek anahtarini dosyanin basina duz metin yazar, yani token orada
+   * birikirdi). Ama bolumleme anahtarini istemci verdigi icin dogrulanmadan
+   * kabul edilemez: baska bir cihazin kimligini yazan gecerli bir token sahibi,
+   * o cihazin onbellek girdisini KENDI manifestiyle zehirleyebilirdi. Kurban
+   * cihaz manifesti reddeder (imza deviceId'yi kapsiyor) ve o pencerede senkron
+   * olamaz.
+   *
+   * Uyusmazlikta 400 donuyoruz; nginx 400'u onbelleklemez, yani zehirlenecek bir
+   * girdi hic olusmaz. Baslik YOKSA sorun degil (eski cihaz surumu): kutu o
+   * durumda onbelleklemez, dogruluk bozulmaz.
+   */
+  const bildirilen = req.get('x-cihaz')
+  if (bildirilen && bildirilen !== device.id) {
+    noteFailure('device', parmak)
+    return res.status(400).json({ error: 'X-Cihaz basligi token sahibiyle uyusmuyor' })
+  }
 
   noteSuccess('device', parmak)
   noteSuccess('ip', ip)
@@ -72,7 +101,25 @@ deviceRouter.post('/logs', auth,
     // Bu yuzden basliga degil, gzip sihirli baytina (0x1f 0x8b) bakiyoruz:
     // boylece hem acilmis hem acilmamis govde dogru islenir.
     if (body.length > 2 && body[0] === 0x1f && body[1] === 0x8b) {
-      try { body = zlib.gunzipSync(body) } catch { return res.status(400).json({ error: 'gzip cozulemedi' }) }
+      /*
+       * SIKISTIRMA BOMBASI SINIRI - maxOutputLength ZORUNLU.
+       *
+       * Eskiden `zlib.gunzipSync(body)` sinirsizdi. 32 MB'lik govde sinirinin
+       * ARKASINDAN gigabaytlarca veri acilabilir: gecerli bir cihaz tokeni olan
+       * (sokulmus bir stick'ten cikarilmasi yeterli) biri tek istekle sunucunun
+       * bellegini tuketir. Sunucu olurse o noktadaki TUM otobusler pencerelerini
+       * kaybeder ve fatura loglari alinmaz - yani en pahali sonuc.
+       *
+       * Gercekci ust sinir: bir oynatma log satiri ~200 bayt, cihaz ACK alana kadar
+       * biriktiriyor. 16 MB bir cihazin biriktirebilecegi her seyi fazlasiyla asar.
+       */
+      try {
+        body = zlib.gunzipSync(body, { maxOutputLength: MAX_LOG_ACILMIS })
+      } catch (e) {
+        const bomba = String(e.message || '').includes('exceed')
+        if (bomba) console.warn(`${req.device.id}: log govdesi ${MAX_LOG_ACILMIS} bayt sinirini asti (sikistirma bombasi?)`)
+        return res.status(400).json({ error: bomba ? 'log govdesi cok buyuk' : 'gzip cozulemedi' })
+      }
     }
 
     /*
@@ -217,6 +264,12 @@ function heartbeatAlanlari (b) {
     rebootsSince24h: sayi(ham.rebootsSince24h),
     clockTrusted: bool(ham.clockTrusted),
     clockNote: metin(ham.clockNote, 200),
+    /*
+     * LISTE NEDENI - "playableItems: 0" tek basina mudahaleye yol gostermiyor.
+     * Cihaz tarafinda bu deger oynatma listesini KURAN kodun kendisinden geliyor,
+     * yani panel gordugu sayiyla ekrandaki gercek arasinda ayrisma olamaz.
+     */
+    playlistReason: metin(ham.playlistReason, 200),
     safeMode: bool(ham.safeMode),
     deviceOwner: bool(ham.deviceOwner),
     policyErrors: metin(ham.policyErrors, 300),
@@ -245,9 +298,26 @@ deviceRouter.post('/heartbeat', auth, express.json({ limit: '256kb' }), (req, re
  * Bu yuzden ekran goruntusu degil, oynatilan dosyadan cikarilan kare gonderiliyor.
  * Ne kanitlar: o dosyanin o saatte oynatildigini. Ne kanitlamaz: TV'nin acik oldugunu.
  */
+/*
+ * KANIT KARESI SIKLIK SINIRI - SUNUCU TARAFINDA.
+ *
+ * "Gunde bir kare" kurali YALNIZCA cihazda uygulaniyordu (config.lastProofAt).
+ * Cihaz guvenilmeyen taraftir: bozuk bir surum, kurcalanmis bir stick ya da
+ * sifirlanmis bir SharedPreferences her pencerede kare gonderebilir. 4 MB x
+ * cihaz sayisi x tekrar = disk dolar; dolu diskte save() ve appendPlayLogs
+ * yazamaz, yani FATURA loglari da alinamaz. Sunucu kendi kuralini uygulamali.
+ */
+const PROOF_ARALIK_MS = Number(process.env.PROOF_MIN_ARALIK_MS || 6 * 3600 * 1000)
+const sonKanit = new Map()   // deviceId -> epoch ms
+
 deviceRouter.post('/proof', auth,
   express.raw({ type: () => true, limit: '4mb' }),
   (req, res) => {
+    const once = sonKanit.get(req.device.id) || 0
+    if (Date.now() - once < PROOF_ARALIK_MS) {
+      return res.status(429).json({ error: 'kanit karesi cok sik', enErkenMs: PROOF_ARALIK_MS - (Date.now() - once) })
+    }
+    sonKanit.set(req.device.id, Date.now())
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
       return res.status(400).json({ error: 'govde bos' })
     }

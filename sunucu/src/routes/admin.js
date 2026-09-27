@@ -49,8 +49,19 @@ function auth (req, res, next) {
   if (tooManyFailures('admin', ip)) {
     return res.status(429).json({ error: 'cok fazla basarisiz deneme, 15 dakika bekleyin' })
   }
+  /*
+   * SORGU DIZESINDEKI TOKEN KALDIRILDI.
+   *
+   * Tek kullanicisi panelin rapor indirme baglantisiydi; panel artik Authorization
+   * basligi + blob indirme kullaniyor. Sorgu dizesinde tasinan bir admin tokeni
+   * tarayici gecmisine, Referer basligina ve noktadaki onbellek kutusunun erisim
+   * loguna giriyordu - sunucunun kendi log satirinda redakte etmemiz gerekmesi de
+   * bunun kaniti. Baslik yolu her zaman vardi; ikinci yolu tutmanin faydasi yok.
+   *
+   * Elle curl kullananlar icin: -H "Authorization: Bearer <token>"
+   */
   const header = req.get('authorization') || ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : (req.query.token || '')
+  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   if (!safeEqual(token, config.adminToken)) {
     noteFailure('admin', ip)
     return res.status(401).json({ error: 'yetkisiz' })
@@ -98,6 +109,9 @@ adminRouter.get('/state', (req, res) => {
       safeMode: hb?.safeMode ?? false,
       // Oynatilamayan icerik: dosya saglam indi ama cihaz cozemiyor -> yeniden kodlanmali
       badItems: hb?.badItems ?? null,
+      // Listenin NEDEN oyle oldugu: "0 oynatilabilir" tek basina ne yapilacagini
+      // soylemiyor (inmemis icerik mi, suresi bitmis kampanyalar mi, saat mi?).
+      playlistReason: hb?.playlistReason ?? null,
       // Son pencerede inen bayt: "3 dakika yetiyor mu?" sorusunun dogrudan cevabi
       sessionBytes: hb?.sessionBytes ?? null,
       pendingLogs: hb?.pendingLogs ?? null,
@@ -306,7 +320,16 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
     validFrom,
     validUntil,
     dayparts,
-    weight: Math.max(1, Number(b.weight) || 1),
+    /*
+     * AGIRLIK UST SINIRI - CIHAZLA AYNI SINIR.
+     *
+     * Sunucu sinirsiz kabul ediyordu, cihaz ise Weighting icinde 20'de KIRPIYOR.
+     * Operator "bu reklam 100 kat donsun" diye 100 yazdiginda panel 100 gosteriyor,
+     * cihaz 20 uyguluyordu: reklamverene satilan sey ile yayinlanan sey ayrisiyor ve
+     * fark hicbir yerde gorunmuyordu. Sinir tek yerde olmali ve operatorun GORDUGU
+     * deger uygulanan deger olmali.
+     */
+    weight: Math.min(AGIRLIK_UST_SINIR, Math.max(1, Math.trunc(Number(b.weight)) || 1)),
     groups: Array.isArray(b.groups) ? b.groups : [],
     evergreen,
     enabled: b.enabled !== false,
@@ -675,8 +698,11 @@ adminRouter.get('/pencere-raporu.csv', (req, res) => {
   const from = req.query.from ? String(req.query.from).slice(0, 10) : null
   const to = req.query.to ? String(req.query.to).slice(0, 10) : null
 
+  const aralik = aralikCoz(from, to)
+  if (aralik.hata) return res.status(400).json(aralik.hata)
+
   const agg = new Map()
-  for (const h of readHeartbeatHistory(from, to)) {
+  for (const h of readHeartbeatHistory(aralik.from, aralik.to)) {
     const gun = String(h.at || '').slice(0, 10)
     const key = `${h.deviceId}\u0000${gun}`
     const cur = agg.get(key) || {
@@ -702,7 +728,7 @@ adminRouter.get('/pencere-raporu.csv', (req, res) => {
   }
 
   res.set('Content-Type', 'text/csv; charset=utf-8')
-  res.set('Content-Disposition', 'attachment; filename="pencere-raporu.csv"')
+  res.set('Content-Disposition', `attachment; filename="pencere-raporu-${aralik.from}_${aralik.to}.csv"`)
   res.send('\uFEFF' + lines.join('\n'))
 })
 
@@ -714,6 +740,11 @@ adminRouter.get('/report.csv', (req, res) => {
   const from = req.query.from ? String(req.query.from).slice(0, 10) : null
   const to = req.query.to ? String(req.query.to).slice(0, 10) : null
   const campaign = req.query.campaign ? String(req.query.campaign) : null
+
+  // Aralik SINIRLI: verilmezse son 90 gun (bkz. aralikCoz). Sinirsiz okuma, sunucuyu
+  // o sure boyunca tum otobuslere kapatirdi.
+  const aralik = aralikCoz(from, to)
+  if (aralik.hata) return res.status(400).json(aralik.hata)
 
   /*
    * GUN SECIMI - FATURANIN EN HASSAS NOKTASI.
@@ -735,12 +766,11 @@ adminRouter.get('/report.csv', (req, res) => {
     return String(r.receivedAt || '').slice(0, 10)
   }
 
-  const rows = readPlayLogs(from, to).filter((r) => {
+  const rows = readPlayLogs(aralik.from, aralik.to).filter((r) => {
     if (!r.completed) return false
     if (campaign && r.itemId !== campaign) return false
     const g = gunu(r)
-    if (from && g < from) return false
-    if (to && g > to) return false
+    if (g < aralik.from || g > aralik.to) return false
     return true
   })
 
@@ -771,7 +801,9 @@ adminRouter.get('/report.csv', (req, res) => {
   }
 
   res.set('Content-Type', 'text/csv; charset=utf-8')
-  res.set('Content-Disposition', 'attachment; filename="oynatma-raporu.csv"')
+  // Dosya adi ETKIN araligi tasir: operator hangi donemi indirdigini sonradan da bilsin
+  // (tarih vermediginde varsayilan pencere uygulandigi icin bu onemli).
+  res.set('Content-Disposition', `attachment; filename="oynatma-raporu-${aralik.from}_${aralik.to}.csv"`)
   res.send('﻿' + lines.join('\n'))
 })
 
@@ -793,6 +825,62 @@ function grupSayisiDogrula (ham, varsayilan) {
   if (!Number.isInteger(n) || n < 1 || n > config.rolloutGroups) return null
   return n
 }
+
+/**
+ * RAPOR ARALIGI SINIRLI - HEM BELLEK HEM OLAY DONGUSU ICIN.
+ *
+ * Rapor uclari ilgili TUM gunlerin NDJSON/heartbeat dosyalarini SENKRON okuyup
+ * RAM'e aliyor. Aralik verilmezse bu "tum gecmis" demektir: bir yil sonra 50 cihaz
+ * x 365 gun x onlarca satir, hem yuz MB'lari bellege alir hem de okuma/ayristirma
+ * suresince Node'un tek is parcacigini kilitler - tam o anda noktaya giren otobus
+ * manifest istegi icin zaman asimina ugrar ve 3 dakikalik penceresini kaybeder.
+ *
+ * Operator raporu her zaman bir fatura donemi icin ceker, yani aralik zaten var.
+ * Ust sinir 400 gun: yillik rapor + pay.
+ */
+const RAPOR_MAX_GUN = Number(process.env.RAPOR_MAX_GUN || 400)
+
+/** Varsayilan pencere: operator tarih vermezse son N gun. */
+const RAPOR_VARSAYILAN_GUN = Number(process.env.RAPOR_VARSAYILAN_GUN || 90)
+
+const GUN_BICIMI = /^\d{4}-\d{2}-\d{2}$/
+const gunEkle = (gunStr, delta) =>
+  new Date(Date.parse(`${gunStr}T00:00:00Z`) + delta * 86_400_000).toISOString().slice(0, 10)
+
+/**
+ * Istenen araligi coz ve SINIRLA.
+ * @returns {{from: string, to: string}} veya {{hata: object}}
+ */
+function aralikCoz (from, to) {
+  for (const [ad, v] of [['from', from], ['to', to]]) {
+    if (v && !GUN_BICIMI.test(v)) return { hata: { error: `${ad} YYYY-AA-GG biciminde olmali`, gelen: v } }
+  }
+  const bugun = new Date().toISOString().slice(0, 10)
+  // Tarih verilmezse "tum gecmis" DEGIL, son RAPOR_VARSAYILAN_GUN gun.
+  const bit = to || bugun
+  const bas = from || gunEkle(bit, -(RAPOR_VARSAYILAN_GUN - 1))
+  if (bas > bit) return { hata: { error: 'from, to`dan sonra olamaz', from: bas, to: bit } }
+  const gun = Math.round((Date.parse(`${bit}T00:00:00Z`) - Date.parse(`${bas}T00:00:00Z`)) / 86_400_000) + 1
+  if (!Number.isFinite(gun)) return { hata: { error: 'tarihler okunamadi', from: bas, to: bit } }
+  if (gun > RAPOR_MAX_GUN) {
+    return {
+      hata: {
+        error: `aralik en fazla ${RAPOR_MAX_GUN} gun olabilir`,
+        istenen: gun,
+        detail: 'Daha genis aralik tum gunleri bellege okur ve sunucu o sure boyunca ' +
+          'hicbir otobuse cevap veremez. Raporu donemlere bolun.'
+      }
+    }
+  }
+  return { from: bas, to: bit }
+}
+
+/**
+ * Kampanya agirligi ust siniri.
+ * Cihaz tarafindaki Weighting.MAX_AGIRLIK ile AYNI olmak zorunda: aksi halde panelde
+ * gorunen agirlik ile yayinda uygulanan agirlik ayrisir ve fark hicbir yerde gorunmez.
+ */
+const AGIRLIK_UST_SINIR = 20
 
 /** Pozitif tam sayi mi? Degilse null. (Number(null)===0 tuzagi icin - bkz. /device) */
 function pozitifTam (v) {

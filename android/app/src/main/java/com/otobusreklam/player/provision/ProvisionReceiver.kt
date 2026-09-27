@@ -128,10 +128,19 @@ class ProvisionReceiver : BroadcastReceiver() {
          *     Belge, kodda bulunmayan bir adimi anlatiyordu.
          *
          * KIMLIGE DOKUNMUYOR: deviceId ve token degismez. Degisen yalnizca AG ve
-         * SUNUCU ADRESI. Sunucu adresini degistirmek icerik guvenligini bozmaz -
-         * manifest Ed25519 ile imzali, yani sahte bir sunucu gecerli manifest
-         * uretemez; en fazla hizmet kesintisi yapabilir, ki cihaza fiziksel erisimi
-         * olan biri bunu zaten yapabilir.
+         * SUNUCU ADRESI.
+         *
+         * DURUST SINIR: "en fazla hizmet kesintisi" demek EKSIK olurdu. Sunucu adresi
+         * degistiginde cihaz kendi TOKENINI yeni adrese Authorization basligiyla
+         * gonderir, yani o adresi kontrol eden taraf O CIHAZIN tokenini ogrenir.
+         * Icerik guvenligi bozulmaz (manifest Ed25519 imzali; sahte bir sunucu gecerli
+         * manifest uretemez) ama token sizmasi gercektir.
+         *
+         * Neden yine de kabul edilebilir: buraya gelebilmek icin PROVISION_SECRET ve
+         * cihaza ADB erisimi gerekiyor. Ikisine sahip olan biri zaten o stick'i sokup
+         * tokenini dogrudan okuyabilir - yani bu yol yeni bir yetki kazandirmiyor,
+         * yalnizca ayni yetkiyi daha kolay kullaniyor. Sizan token TEK CIHAZA aittir;
+         * iptal etmek panelden bir tiklamadir (revoked).
          */
         if (intent.action == ACTION_NETWORK || (config.provisioned && intent.getBooleanExtra("agGuncelle", false))) {
             if (!config.provisioned) {
@@ -139,7 +148,6 @@ class ProvisionReceiver : BroadcastReceiver() {
                 return
             }
             val yeniSsid = intent.getStringExtra("ssid").orEmpty()
-            val yeniPsk = intent.getStringExtra("psk").orEmpty()
             val yeniBase = intent.getStringExtra("baseUrl").orEmpty()
             val yeniApi = intent.getStringExtra("apiUrl").orEmpty()
 
@@ -147,7 +155,38 @@ class ProvisionReceiver : BroadcastReceiver() {
                 reply("REDDEDILDI: ssid veya baseUrl gerekli")
                 return
             }
-            if (yeniSsid.isNotBlank()) { config.ssid = yeniSsid; config.psk = yeniPsk }
+
+            /*
+             * PAROLA SESSIZCE SILINMEZ.
+             *
+             * Eski hali `config.psk = yeniPsk` idi ve `yeniPsk`, extra yoksa BOS
+             * DIZGIYE dusuyordu. Yani `--es ssid "YENI-AP"` yazip `--es psk` yazmayi
+             * atlayan (ya da parolayi ayri bir adimda verecegini dusunen) bir teknisyen,
+             * cihazin profilini ACIK AG olarak yeniden yaziyordu: WPA2 korumali AP'ye
+             * bir daha ASLA baglanilmiyordu. Tam da filoyu kurtarmak icin eklenen
+             * ozellik, filoyu kaybetmenin yeni bir yolu oluyordu - ve yayin
+             * "TAMAM ... wifi=yazildi" diyordu.
+             *
+             * Artik: parola YALNIZCA extra gercekten verildiyse degisir. Acik bir ag
+             * kastediliyorsa bu ACIKCA soylenmeli: --ez acikAg true
+             */
+            val pskVerildi = intent.hasExtra("psk")
+            val acikAg = intent.getBooleanExtra("acikAg", false)
+            if (yeniSsid.isNotBlank()) {
+                if (!pskVerildi && !acikAg && config.psk.isBlank()) {
+                    reply("REDDEDILDI: psk verilmedi. Parolali ag icin --es psk \"...\", " +
+                        "sifresiz ag icin --ez acikAg true")
+                    return
+                }
+                config.ssid = yeniSsid
+                when {
+                    acikAg -> config.psk = ""
+                    pskVerildi -> config.psk = intent.getStringExtra("psk").orEmpty()
+                    // psk verilmedi ve acikAg da denmedi: VAR OLAN parolayi KORU.
+                    // (Yalnizca SSID adi degistiyse bu dogru davranis.)
+                    else -> Log.i(TAG, "psk verilmedi - mevcut parola korunuyor")
+                }
+            }
             if (yeniBase.isNotBlank()) config.baseUrl = yeniBase
             if (yeniApi.isNotBlank()) config.apiUrl = yeniApi
 

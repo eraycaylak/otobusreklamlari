@@ -66,6 +66,22 @@ class SyncService : Service() {
     /** stopSelf(startId): araya giren ikinci bir WiFi olayinin baslattigi senkronu oldurmemek icin. */
     @Volatile private var sonStartId = -1
 
+    /*
+     * OTURUM NESLI - ESKI ISIN YENISINI OLDURMESINI ONLER.
+     *
+     * stopSync, iptalin TAMAMLANMASINI beklemeden `running = false` yaziyordu. Otobus
+     * noktadan cikip birkac saniye sonra geri dondugunde (manevra, kirmizi isik) yeni
+     * bir onStartCommand geliyor, `running` false oldugu icin IKINCI bir senkron
+     * basliyor - ve ardindan ESKI isin `finally` blogu kosuyor: `running = false`
+     * yaziyor (yenisi calisiyorken!), on plani kapatiyor ve `stopSelf(sonStartId)` ile
+     * artik YENI oturuma ait olan startId'yi durduruyor. Yani yeni pencere daha
+     * baslamadan oluyor ve bu hicbir yerde hata olarak gorunmuyor.
+     *
+     * Her oturum kendi neslini tasiyor; `finally` yalnizca hala GUNCEL nesilse
+     * durum degistiriyor.
+     */
+    private val nesil = java.util.concurrent.atomic.AtomicInteger(0)
+
     private lateinit var config: Config
     private lateinit var store: FileStore
     private lateinit var db: AppDatabase
@@ -118,6 +134,7 @@ class SyncService : Service() {
 
         network = net
         running = true
+        val benimNesil = nesil.incrementAndGet()
 
         // LAZY + explicit start: `job = scope.launch { ... }` yazilsaydi coroutine
         // atama tamamlanmadan baska bir is parcaciginda calismaya baslayabilirdi.
@@ -141,11 +158,22 @@ class SyncService : Service() {
                 Log.e(TAG, "senkron hatasi", e)
                 config.lastError = "${e.javaClass.simpleName}: ${e.message}"
             } finally {
-                running = false
-                stopForegroundCompat()
-                // startId ile: bu cagriyi baslatan istek icin duruyoruz. Araya giren
-                // yeni bir WiFi olayi varsa onun baslattigi senkron yasamaya devam eder.
-                stopSelf(sonStartId)
+                /*
+                 * YALNIZCA HALA GUNCEL NESILSE durum degistir.
+                 *
+                 * Araya yeni bir oturum girdiyse (bkz. `nesil`) bu blok hicbir seye
+                 * dokunmaz: aksi halde eski is, yeni oturumun on planini kapatip
+                 * servisi durduruyordu.
+                 */
+                if (nesil.get() == benimNesil) {
+                    running = false
+                    stopForegroundCompat()
+                    // startId ile: bu cagriyi baslatan istek icin duruyoruz. Araya giren
+                    // yeni bir WiFi olayi varsa onun baslattigi senkron yasamaya devam eder.
+                    stopSelf(sonStartId)
+                } else {
+                    Log.i(TAG, "eski senkron kapandi (nesil $benimNesil), yeni oturum devam ediyor")
+                }
             }
         }
         job = newJob
@@ -308,7 +336,7 @@ class SyncService : Service() {
     private fun fetchManifest(client: OkHttpClient): CekilenManifest? {
         val url = "${config.apiUrl}/api/v1/manifest"
         return try {
-            client.newCall(Http.authed(url, config.token).build()).execute().use { response ->
+            client.newCall(Http.authed(url, config.token, config.deviceId).build()).execute().use { response ->
                 /*
                  * ZAMANI HER DURUMDA OKU - BASARISIZ YANITTA DA.
                  *
@@ -568,6 +596,22 @@ class SyncService : Service() {
         return result == Downloader.Result.READY
     }
 
+    /**
+     * Senkron hala calisiyor mu?
+     *
+     * DURUSTLUK NOTU - BILINEN VE SINIRLI KALAN DURUM:
+     * `job` alani araya giren yeni bir oturumla degisir, yani IPTAL EDILMIS eski bir is
+     * bu fonksiyona sorarsa kisa bir sure `true` alabilir. Asil zarar - eski isin
+     * `finally` blogunun YENI oturumu oldurmesi - `nesil` sayaciyla kapatildi (bkz.
+     * yukarisi). Kalan pencere sinirli ve zararsiz: iptal edilmis coroutine bir sonraki
+     * askiya alma noktasinda (fetchChunk/withPermit/async) CancellationException alir,
+     * yani en fazla bir parca surer; o parca da `.part` dosyasinin dogrulanmis bir
+     * offset'ine yazilir (ayni baytlar, hash'le dogrulanmis) - bozulma uretmez.
+     *
+     * Tam kapatmak icin canlilik olcutunun coroutine'in KENDI baglamindan gelmesi
+     * gerekir; bu da Downloader/Updater'a kadar dort imzayi degistirmek demek. Gercek
+     * zarar kapali oldugu icin o degisiklik bilincli olarak yapilmadi.
+     */
     private fun stillRunning(): Boolean = running && (job?.isActive ?: false) && scope.isActive
 
     // ------------------------------------------------------------- bildirim

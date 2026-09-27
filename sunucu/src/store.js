@@ -255,9 +255,25 @@ export function writeHeartbeat (deviceId, data) {
   ensureDirs()
   const kayit = { ...data, deviceId, at: new Date().toISOString() }
 
-  // Son durum (panel bunu okur)
+  /*
+   * Son durum (panel bunu okur) - ATOMIK YAZILIR.
+   *
+   * Duz writeFileSync dosyayi once KISALTIR, sonra yazar. Guc kesintisinde ya da
+   * dolu diskte geriye kirpik bir JSON kalir; readHeartbeats onu try/catch ile
+   * ATLAR ve panel o cihazi "hic heartbeat gelmedi" gibi gosterir - yani "bayat"
+   * alarmi, cihaz aslinda dakikalar once konusmus olmasina ragmen yanar. Daha
+   * kotusu ters yon: EKRAN BOS gonderen bir cihazin kaydi bozulursa panel onu
+   * gormez. Gecici dosya + rename ile eski kayit her zaman OKUNABILIR kalir.
+   */
   const file = path.join(paths.heartbeat, `${encodeURIComponent(deviceId)}.json`)
-  fs.writeFileSync(file, JSON.stringify(kayit, null, 2))
+  const gecici = `${file}.tmp`
+  try {
+    fs.writeFileSync(gecici, JSON.stringify(kayit, null, 2))
+    fs.renameSync(gecici, file)
+  } catch (e) {
+    try { fs.rmSync(gecici, { force: true }) } catch { /* yoksay */ }
+    throw e
+  }
 
   /*
    * GECMIS.

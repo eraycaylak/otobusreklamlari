@@ -35,8 +35,27 @@ object Http {
         return builder.build()
     }
 
-    fun authed(url: String, token: String): Request.Builder =
-        Request.Builder().url(url).header("Authorization", "Bearer $token")
+    /**
+     * Kimlik dogrulamali istek.
+     *
+     * X-Cihaz BASLIGI - NOKTA ONBELLEGININ ANAHTARI ICIN.
+     *
+     * Onbellek kutusu manifesti CIHAZ BASINA onbelleklemek zorunda (her cihazin kendi
+     * ogeleri ve kendi rollout grubu var). Anahtar eskiden `$http_authorization`
+     * iceriyordu; nginx onbellek anahtarini her onbellek dosyasinin BASINA duz metin
+     * olarak yazar, yani 50 cihazin TOKENI yol kenarindaki bir kabinede duran kutunun
+     * diskinde acik metin birikiyordu. Cihaz kimligi ise sir DEGIL (otobusun ustunde
+     * yazili, panelde gorunur): anahtar olarak onu kullanmak ayni bolumlemeyi sir
+     * sizdirmadan sagliyor.
+     *
+     * Sunucu bu basligi tokenin sahibiyle KARSILASTIRIR ve uyusmazsa 400 doner; nginx
+     * 400'u onbelleklemedigi icin baska bir cihazin onbellek girdisini zehirlemek
+     * mumkun degil.
+     */
+    fun authed(url: String, token: String, deviceId: String = ""): Request.Builder =
+        Request.Builder().url(url)
+            .header("Authorization", "Bearer $token")
+            .apply { if (deviceId.isNotBlank()) header("X-Cihaz", deviceId) }
 
     /**
      * Range istegi: kaldigi bayttan devam. Sunucu 206 Partial Content donmeli.

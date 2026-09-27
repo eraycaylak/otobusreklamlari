@@ -67,7 +67,24 @@ export function noteFailure (scope, key) {
   if (rec.count >= limit(scope)) rec.until = now + LOCK_MS
 }
 
+/**
+ * Basarili dogrulamadan sonra sayaci temizle.
+ *
+ * DIKKAT - 'ip' KAPSAMINDA CAGIRILMAMALI (bkz. device.js/auth).
+ *
+ * Bu mimaride noktadaki TUM otobusler tek cikis IP'sinin arkasinda. Basarili her
+ * cihaz dogrulamasinda IP sayaci da siliniyordu: saglikli bir otobus her 3 dakikada
+ * bir senkron oldugu icin sayac pratikte HIC birikmiyor ve 200'luk kaba kuvvet
+ * esigine ASLA ulasilamiyordu. Yani ayni ag icindeki bir saldirgan, farkli tokenlar
+ * deneyerek (her denemede parmak izi degistigi icin cihaz sayaci da islemez)
+ * SINIRSIZ deneme yapabiliyordu - iki katmanli tasarimin ikinci katmani fiilen yoktu.
+ *
+ * Cihaz parmak izi kapsamini temizlemek DOGRU: orada amac, birkac kez yanlis deneyip
+ * sonra duzelen bir cihazi cezalandirmamak. IP kapsami kendi penceresiyle
+ * (WINDOW_MS) dogal olarak zaten sifirlaniyor.
+ */
 export function noteSuccess (scope, key) {
+  if (scope === 'ip') return
   attempts.delete(anahtar(scope, key))
 }
 

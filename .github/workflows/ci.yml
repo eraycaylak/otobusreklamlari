@@ -184,4 +184,31 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S warning tools/*.sh onbellek-kutusu/*.sh
+          # sunucu/scripts DAHIL: yedekle.sh ve sistem-kurulum.sh root olarak calisiyor
+          # ve OZEL ANAHTARI isliyor - tam da denetlenmesi gereken betikler onlar.
+          # Eskiden bu iki dizin taranmiyordu, yani kapsam disi kalan kod en riskliydi.
+          shellcheck -S warning tools/*.sh onbellek-kutusu/*.sh sunucu/scripts/*.sh
+
+      # -------------------------------------------------------------------
+      # NGINX YAPILANDIRMASI DOGRULANIR.
+      #
+      # Bu dosya "mimarinin kalbi" diye tanimlanan bilesen ama CI'da HIC
+      # dogrulanmiyordu: log_format'i yanlis baglama koymak, bir parantezi
+      # atlamak ya da gecersiz bir direktif yazmak ancak SAHADA - noktaya
+      # kurulum sirasinda - anlasilirdi. `nginx -t` bunu saniyeler icinde
+      # yakalar.
+      #
+      # Dosya sites-available icin yazildi, yani http BAGLAMINDA include
+      # edilir; testte de oyle sariyoruz.
+      # -------------------------------------------------------------------
+      - name: nginx yapilandirmasi
+        run: |
+          sudo apt-get install -y -qq nginx-core
+          sudo mkdir -p /var/cache/nginx/reklam /srv/reklam/content /srv/reklam/app
+          cat > /tmp/nginx-test.conf <<CONF
+          events {}
+          http {
+            include $GITHUB_WORKSPACE/onbellek-kutusu/nginx.conf;
+          }
+          CONF
+          sudo nginx -t -c /tmp/nginx-test.conf

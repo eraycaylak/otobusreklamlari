@@ -34,10 +34,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
-    <!-- Dokunmatik ekran da yok: kumanda ile kullaniliyor -->
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-
-    <!-- Android TV stick: dokunmatik ekran ve leanback zorunlu degil -->
+    <!-- Android TV stick: dokunmatik ekran YOK (kumanda ile kullaniliyor),
+         leanback de zorunlu degil. (touchscreen satiri iki kez yazilmisti.) -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />

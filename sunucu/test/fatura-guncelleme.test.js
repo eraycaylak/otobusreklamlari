@@ -461,3 +461,30 @@ test('HEARTBEAT: beyaz liste bilinmeyen ve sisirilmis alanlari keser', async () 
   assert.equal(kayit.uydurmaAlan, undefined, 'beyaz listede olmayan alan kaliciya yazilmamali')
   assert.equal(kayit.readyItems, 2, 'beklenen alan gecmeli')
 })
+
+test('ONBELLEK BOLUMLEME: X-Cihaz basligi token sahibiyle uyusmazsa 400', async () => {
+  /*
+   * Nokta onbellek kutusu manifesti cihaz basina bolumlemek zorunda. Anahtar eskiden
+   * ham TOKEN iceriyordu; nginx onbellek anahtarini her onbellek dosyasinin basina duz
+   * metin yazar, yani 50 cihazin tokeni yol kenarindaki bir kabinedeki diskte acik
+   * metin birikiyordu. Artik anahtar cihaz kimligi (sir degil) - ama bolumleme
+   * anahtarini istemci verdigi icin DOGRULANMAK zorunda: aksi halde gecerli bir token
+   * sahibi baska bir cihazin onbellek girdisini kendi manifestiyle zehirler ve o
+   * otobus (imza deviceId'yi kapsadigi icin) manifesti reddedip senkron olamaz.
+   */
+  const yanlis = await fetch(`${base}/api/v1/manifest`, {
+    headers: { authorization: `Bearer ${token14}`, 'x-cihaz': 'OTOBUS-099' }
+  })
+  assert.equal(yanlis.status, 400, 'baska cihazin kimligi ile istek 400 almali')
+
+  const dogru = await fetch(`${base}/api/v1/manifest`, {
+    headers: { authorization: `Bearer ${token14}`, 'x-cihaz': 'OTOBUS-014' }
+  })
+  assert.equal(dogru.status, 200, 'kendi kimligiyle istek gecmeli')
+
+  // Baslik HIC yoksa da gecmeli: eski cihaz surumu kirilmasin (kutu onbelleklemez).
+  const baslikssiz = await fetch(`${base}/api/v1/manifest`, {
+    headers: { authorization: `Bearer ${token14}` }
+  })
+  assert.equal(baslikssiz.status, 200)
+})

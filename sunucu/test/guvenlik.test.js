@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import nodeFs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -472,4 +473,62 @@ test('cok fazla basarisiz admin denemesi IP kilitler', async () => {
   // Kilit DOGRU tokeni de kapsar: saldirgan denemeye devam edemesin
   const r = await fetch(`${base}/api/admin/state`, { headers: H })
   assert.equal(r.status, 429)
+})
+
+test('sorgu dizesindeki admin tokeni ARTIK KABUL EDILMIYOR', async () => {
+  // Bu dosyadaki deneme-siniri testleri sayaci doldurmus olabilir.
+  guard.resetFailures()
+  /*
+   * Tek kullanicisi panelin rapor indirme baglantisiydi; panel artik Authorization
+   * basligi + blob indirme kullaniyor. Sorgu dizesinde tasinan bir admin tokeni
+   * tarayici gecmisine, Referer basligina ve noktadaki onbellek kutusunun erisim
+   * loguna giriyordu. Bu test karari kilitliyor: geri gelirse burada goruruz.
+   */
+  const q = await fetch(`${base}/api/admin/state?token=${encodeURIComponent(ADMIN)}`)
+  assert.equal(q.status, 401, 'sorgu dizesindeki token 401 almali')
+
+  // Baslik yolu calismaya devam etmeli (aksi halde bu degisiklik paneli kirardi).
+  const h = await fetch(`${base}/api/admin/state`, { headers: { authorization: `Bearer ${ADMIN}` } })
+  assert.equal(h.status, 200)
+
+  // Rapor uclari da yalnizca baslikla.
+  const csv = await fetch(`${base}/api/admin/report.csv?token=${encodeURIComponent(ADMIN)}`)
+  assert.equal(csv.status, 401)
+})
+
+test('kodun okudugu her ortam degiskeni .env.example icinde ANLATILMIS', () => {
+  /*
+   * BELGE-KOD AYRISMASI TESTLE KILITLENIR.
+   *
+   * Operatorun ayar yuzeyini gorebildigi TEK yer .env.example. Kodda okunan ama
+   * orada hic gecmeyen bir degisken, var olmayan bir ayardan kotudur: operator onu
+   * bilmez, varsayilanini gormez ve yanlis bir degeri fark etmez. Somut ornekler:
+   * TIMEZONE yanlis yazilirsa sabah kusagi reklami ogleden sonra doner;
+   * TRUST_PROXY_HOPS yanlissa deneme siniri atlatilabilir. Ikisi de dosyada YOKTU.
+   */
+  const fs = nodeFs
+  const kok = new URL('../', import.meta.url)
+  const ornek = fs.readFileSync(new URL('.env.example', kok), 'utf8')
+
+  const bulunan = new Set()
+  const tara = (dizin) => {
+    for (const e of fs.readdirSync(new URL(dizin, kok), { withFileTypes: true })) {
+      if (e.isDirectory()) { tara(`${dizin}${e.name}/`); continue }
+      if (!e.name.endsWith('.js')) continue
+      const kaynak = fs.readFileSync(new URL(`${dizin}${e.name}`, kok), 'utf8')
+      for (const m of kaynak.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) bulunan.add(m[1])
+    }
+  }
+  tara('src/')
+  tara('scripts/')
+
+  // Bunlar ayar degil: calisma ortami / test kacislari.
+  const haric = new Set(['NODE_ENV', 'SKIP_TRANSCODE'])
+  const eksik = [...bulunan].filter((k) => !haric.has(k) && !ornek.includes(k)).sort()
+
+  assert.deepEqual(
+    eksik, [],
+    `.env.example icinde anlatilmayan ortam degiskenleri: ${eksik.join(', ')}. ` +
+    'Yeni bir ayar eklediyseniz operatorun gorebilecegi yere de yazin.'
+  )
 })

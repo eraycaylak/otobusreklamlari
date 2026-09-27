@@ -8,11 +8,24 @@ import { config } from './config.js'
  * NEDEN: Otobus noktada sadece ~3 dakika duruyor. Baglanti koptugunda yarim dosya
  * silinmiyor; cihaz sadece EKSIK PARCALARI istiyor (HTTP Range). Her parca kendi
  * hash'iyle dogrulandigi icin yarim kalan indirmenin butunlugunden emin olunuyor.
+ *
+ * OLAY DONGUSU BLOKLANMAZ - BU BIR PERFORMANS SUSU DEGIL, ISLEVSEL BIR SART.
+ *
+ * Fonksiyon `async` ilan edilmisti ama govdesi TAMAMEN SENKRONDU: readSync +
+ * createHash tek bir tick icinde yuz MB'lari isliyordu. Node tek is parcaciklidir,
+ * yani o sure boyunca sunucu HICBIR isteye cevap veremez. Tam o anda noktaya giren
+ * bir otobus /api/v1/manifest icin zaman asimina ugrar ve 3 dakikalik penceresini
+ * TAMAMEN kaybeder - hem de operator sadece "panelden video yukledim" yapmisken.
+ * 500 MB'lik bir ham video veya APK'da bu saniyeler suruyor.
+ *
+ * Cozum: gercek asenkron okuma (fs.promises) + her parcadan sonra tick birakmak.
+ * Hash hesabi hala senkron ama tek parca (4 MB) icin milisaniyeler mertebesinde.
  */
 export async function buildChunks (filePath, chunkSize = config.chunkSize) {
-  const size = fs.statSync(filePath).size
+  const fh = await fs.promises.open(filePath, 'r')
+  const st = await fh.stat()
+  const size = st.size
   const chunks = []
-  const fd = fs.openSync(filePath, 'r')
   try {
     let offset = 0
     let index = 0
@@ -28,7 +41,7 @@ export async function buildChunks (filePath, chunkSize = config.chunkSize) {
        * parcayi bir daha ASLA kabul edemiyor: icerik her pencerede bastan indirilip
        * ayni yerde tikaniyor, sebebi de hicbir yerde gorunmuyor. Kalici bir zehir.
        */
-      const okunan = fs.readSync(fd, buf, 0, len, offset)
+      const { bytesRead: okunan } = await fh.read(buf, 0, len, offset)
       if (okunan !== len) {
         throw new Error(`parcalama basarisiz: ${filePath} offset ${offset} icin ${len} bayt istendi, ${okunan} okundu`)
       }
@@ -41,9 +54,12 @@ export async function buildChunks (filePath, chunkSize = config.chunkSize) {
       })
       offset += len
       index += 1
+      // Diger isteklere tick birak: parcalama sirasinda gelen manifest istegi
+      // beklemesin (bkz. yukaridaki not).
+      await new Promise((r) => setImmediate(r))
     }
   } finally {
-    fs.closeSync(fd)
+    await fh.close()
   }
   return { size, chunks }
 }

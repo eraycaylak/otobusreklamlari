@@ -11,7 +11,9 @@
     "anahtar-uret": "node scripts/anahtar-uret.js",
     "cihaz-ekle": "node scripts/cihaz-ekle.js",
     "test": "node --test test/*.test.js",
-    "anahtar-goster": "node scripts/anahtar-goster.js"
+    "anahtar-goster": "node scripts/anahtar-goster.js",
+    "yedekle": "bash scripts/yedekle.sh",
+    "geri-yukle": "bash scripts/geri-yukle.sh"
   },
   "dependencies": {
     "express": "^4.21.2"
