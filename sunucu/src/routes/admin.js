@@ -80,6 +80,8 @@ adminRouter.get('/state', (req, res) => {
       label: d.label,
       group: d.group,
       rolloutGroup: d.rolloutGroup,
+      // Elle mi atandi (kanarya) yoksa cihaz id hash'inden mi geldi?
+      rolloutPinned: !!d.rolloutPinned,
       revoked: !!d.revoked,
       lastSeenAt: hb ? hb.at : null,
       stale: !lastSeen || (now - lastSeen) > maxStaleMs,
@@ -148,6 +150,37 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
   }
   const evergreen = !!b.evergreen
 
+  /*
+   * DAYPART BICIMI DOGRULANIYOR - HATA BURADA GORUNMELI.
+   *
+   * Cihaz tarafinda Daypart.matches, AYRISTIRILAMAYAN bir araligi bilincli olarak
+   * "gun boyu gecerli" sayiyor: bozuk bir tanim yuzunden reklami hic oynatmamak,
+   * yanlis saatte oynatmaktan daha pahali olurdu. Ama bunun bedeli sudur: panelde
+   * "7-10" veya "25:00-30:00" gibi bir yazim hatasi SESSIZCE kabul edilir,
+   * isletmeci sabah kusagi satti sanir, reklam GUN BOYU doner ve kimse fark etmez.
+   *
+   * Hatanin gorulebilecegi tek yer burasi: operatorun onunde, kayit anında.
+   */
+  const dayparts = Array.isArray(b.dayparts)
+    ? b.dayparts.map((d) => String(d).trim()).filter(Boolean)
+    : []
+  const bozukDaypart = dayparts.find((d) => !/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/.test(d))
+  if (bozukDaypart) {
+    return res.status(400).json({
+      error: 'gecersiz daypart',
+      detail: `"${bozukDaypart}" - bicim SS:DD-SS:DD olmali (orn. 07:00-10:00). ` +
+        'Gece yarisini asan aralik desteklenir: 22:00-02:00. ' +
+        'Cihaz bozuk bir tanimi "gun boyu" sayar, yani hata sessizce gecerdi.'
+    })
+  }
+  const esitUc = dayparts.find((d) => d.split('-')[0] === d.split('-')[1])
+  if (esitUc) {
+    return res.status(400).json({
+      error: 'anlamsiz daypart',
+      detail: `"${esitUc}" - baslangic ve bitis ayni. Gun boyu istiyorsaniz daypart'i BOS birakin.`
+    })
+  }
+
   // Evergreen olmayan bir kampanyanin bitis tarihi ZORUNLU.
   // 4G yok -> uzaktan "kaldir" komutu yok. Bitis tarihi icerige gomulu degilse
   // suresi bitmis ucretli reklam otobuste donmeye devam eder. Bu ticari/hukuki risk.
@@ -165,7 +198,7 @@ adminRouter.post('/campaign', express.json(), (req, res) => {
     advertiser: b.advertiser || '',
     validFrom: evergreen ? null : (b.validFrom || null),
     validUntil: evergreen ? null : b.validUntil,
-    dayparts: Array.isArray(b.dayparts) ? b.dayparts : [],
+    dayparts,
     weight: Math.max(1, Number(b.weight) || 1),
     groups: Array.isArray(b.groups) ? b.groups : [],
     evergreen,
@@ -204,9 +237,22 @@ adminRouter.post('/device', express.json(), (req, res) => {
     label: b.label || b.id,
     group: b.group || 'default',
     // Kademeli yayim grubu: uygulama guncellemesi once kucuk gruba gider.
-    rolloutGroup: Number.isFinite(Number(b.rolloutGroup))
-      ? Number(b.rolloutGroup)
-      : (existing?.rolloutGroup ?? rolloutGroupOf(b.id, config.rolloutGroups)),
+    /*
+     * KADEMELI YAYIM GRUBU.
+     *
+     * Number.isFinite(Number(...)) TEK BASINA YETMIYORDU: Number(null) ve Number('')
+     * ikisi de 0 ve 0 "finite"dir. Yani govdede `rolloutGroup: null` gonderen bir
+     * istemci cihazi GRUP 0'a koyuyordu - her guncellemeyi ilk alan, istenmeyen bir
+     * kanarya. Artik POZITIF TAM SAYI sarti var.
+     *
+     * rolloutPinned: degerin ELLE mi atandigini ayirt ediyor. Otomatik atama cihaz
+     * id hash'inden gelir ve cihazin kendi hesabiyla aynidir; panelde bu ikisini
+     * ayirt etmek gerekiyor, yoksa "oto" ile "kanarya yaptim" ayni gorunur.
+     */
+    rolloutGroup: pozitifTam(b.rolloutGroup)
+      ?? existing?.rolloutGroup
+      ?? rolloutGroupOf(b.id, config.rolloutGroups),
+    rolloutPinned: pozitifTam(b.rolloutGroup) != null ? true : (existing?.rolloutPinned ?? false),
     note: b.note || '',
     revoked: !!b.revoked,
     createdAt: existing?.createdAt || new Date().toISOString()
@@ -450,6 +496,13 @@ adminRouter.get('/report.csv', (req, res) => {
  * sanirken cihaz kendini 3. grupta sanir ve kademeli yayim ongorulemez olur.
  * Iki tarafin ayni sonucu urettigi testle dogrulanmistir.
  */
+/** Pozitif tam sayi mi? Degilse null. (Number(null)===0 tuzagi icin - bkz. /device) */
+function pozitifTam (v) {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
 function rolloutGroupOf (deviceId, groups) {
   if (groups <= 1) return 1
   let h = 0

@@ -49,7 +49,12 @@ hata() { printf '\033[31mHATA: %s\033[0m\n' "$1"; exit 1; }
 
 adim "1/6  Cihaz kontrolu"
 adb get-state >/dev/null 2>&1 || hata "adb ile cihaz gorulmuyor"
-HESAP=$(adb shell dumpsys account 2>/dev/null | grep -c 'Account {' | tr -d '\r')
+# DIKKAT: `grep -c` eslesme YOKSA 1 ile cikar. `set -e` altinda bu, atamayi
+# basarisiz sayar ve betigi OLDURUR - hem de TAM DOGRU cihazda, yani hic hesap
+# eklenmemis kutudan yeni bir stick'te. Kontrol, gecmesi gerektigi durumda
+# sessizce duruyordu. `|| true` ile sayimi her zaman aliyoruz.
+HESAP=$(adb shell dumpsys account 2>/dev/null | grep -c 'Account {' || true)
+HESAP=$(printf '%s' "${HESAP:-0}" | tr -cd '0-9')
 [[ "${HESAP:-0}" -gt 0 ]] && hata "cihazda $HESAP hesap ekli - device owner atanamaz. Fabrika ayarlarina donun."
 
 adim "2/6  Sunucuda cihaz kaydi"

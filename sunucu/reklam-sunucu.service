@@ -1,6 +1,17 @@
 # Merkez sunucu systemd unit dosyasi.
-#   sudo cp sunucu/reklam-sunucu.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now reklam-sunucu
+#
+# BU DOSYAYI ELLE KOPYALAMAYIN - scripts/sistem-kurulum.sh kullanin:
+#   sudo ./scripts/sistem-kurulum.sh
+#
+# Sebep: unit asagidaki UC seyin var olmasini bekliyor ve hicbirini kendisi
+# olusturmuyor:
+#   - `reklam` sistem kullanicisi
+#   - /var/lib/reklam        (DATA_DIR - icinde OZEL IMZALAMA ANAHTARI)
+#   - /etc/reklam/sunucu.env (ADMIN_TOKEN)
+# Bunlar yoksa systemd servisi HIC BASLATMAZ (eksik EnvironmentFile olumcaldur)
+# ve Restart=always yuzunden 5 saniyede bir yeniden dener. journalctl'e bakmayan
+# biri icin bu "sunucu calismiyor, sebebi yok" demektir. Kurulum betigi ucunu de
+# olusturur ve ADMIN_TOKEN uretir.
 
 [Unit]
 Description=Otobus ici reklam yayin sunucusu
@@ -20,6 +31,14 @@ EnvironmentFile=/etc/reklam/sunucu.env
 ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=5
+
+# SONSUZ YENIDEN BASLATMA DONGUSUNU DURDUR.
+# Yapilandirma hatasi (eksik env dosyasi, bozuk anahtar) her denemede ayni
+# sekilde basarisiz olur. Sinirsiz denemek sorunu cozmez, yalnizca journal'i
+# doldurur ve servisi "activating" durumunda tutarak arizayi GIZLER. Bes
+# denemeden sonra durup `failed` durumunda kalmasi, sorunu GORUNUR kilar.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 # Guvenlik sikilastirmasi
 NoNewPrivileges=true

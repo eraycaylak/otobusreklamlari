@@ -33,7 +33,8 @@ cd android
 #      MANIFEST_PUBLIC_KEY   -> sunucudan: npm run anahtar-goster
 #      PROVISION_SECRET      -> uzun rastgele bir dize
 #      RELEASE_KEYSTORE + parolalar  -> imza anahtarı (§4.2, kaybetmeyin)
-#    gradle.properties içine yazın, sonra:
+#    ~/.gradle/gradle.properties içine yazın (depodaki android/gradle.properties
+#    yalnızca şablondur ve TAKIP EDILIYOR - sır oraya yazılmaz), sonra:
 ./gradlew assembleRelease
 
 # 3) Cihaz  (kutudan yeni / fabrika ayarında, HİÇ hesap eklenmemiş olmalı)

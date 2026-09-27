@@ -40,16 +40,30 @@ echo "[$(date -Is)] aynalama basliyor: $MERKEZ:$UZAK_DIZIN -> $YEREL_DIZIN"
 HATA=0
 
 # --delete         : merkezde silinen icerik noktadan da silinsin (disk sismesin)
-# --partial-dir    : YARIM DOSYA SERVIS EDILEN ADA YAZILMAZ.
-#                    Duz `--partial` yarim dosyayi NIHAI ADIYLA birakir; nginx onu
-#                    servis eder, otobus tam dosya hash'inde patlar ve tum dosyayi
-#                    bastan indirir - yani 3 dakikalik pencere bosa gider. Gizli bir
-#                    dizinde tutmak devam etme kazancini korur, riski kaldirir.
-# --append-verify  : yavas/kesintili linkte kaldigi yerden devam (dosyalar icerik
-#                    adresli ve DEGISMEZ oldugu icin ekleme guvenli)
+# --max-delete     : TOPLU SILME KAZASINA KARSI SIGORTA. Merkezde DATA_DIR degisirse,
+#                    disk takilmazsa veya sunucu yeniden kurulursa uzak content/
+#                    BOS gorunur ve duz `--delete` noktanin TUM aynasini siler.
+#                    O noktadaki her otobus ertesi gun her seyi bastan indirmeye
+#                    calisir - tek internet hattiyla gunler suren bir kurtarma.
+#                    Sinir asilirsa rsync silmeyi REDDEDIP hata veriyor.
+# --partial-dir    : YARIM DOSYA SERVIS EDILEN ADA YAZILMAZ. Duz `--partial` yarim
+#                    dosyayi NIHAI ADIYLA birakir; nginx onu servis eder, otobus tam
+#                    dosya hash'inde patlar ve tum dosyayi bastan indirir - yani
+#                    3 dakikalik pencere bosa gider.
 # --bwlimit        : aynalama gunduz otobuslerin bant genisligini calmasin
+#
+# --append-verify KULLANILMIYOR (bilincli):
+#   `--append`/`--append-verify` --inplace'i IMA EDER, yani veri dogrudan NIHAI
+#   dosyaya yazilir ve dosya buyuyerek ilerler. Aktarim yarida kesildiginde nginx
+#   KISA bir dosyayi TAM dosya gibi servis eder; otobus hash'te patlar ve pencereyi
+#   bosa harcar. Ustelik --inplace, --partial-dir'i etkisiz kilar - yani yukarida
+#   aldigimiz onlemi sessizce iptal ederdi.
+#   Kaybettigimiz sey ne: yarim kalan aktarimin devami. Ama --partial-dir bunu zaten
+#   sagliyor (rsync bir sonraki turda o dosyayi temel alir), ustelik yarim dosyayi
+#   servis edilen yolun DISINDA tutarak.
 AYNALA() {
-  rsync -a --delete --partial-dir=.rsync-partial --append-verify \
+  rsync -a --delete --max-delete="${MAX_SILME:-50}" \
+        --partial-dir=.rsync-partial \
         --bwlimit="${BWLIMIT:-4000}" \
         "$MERKEZ:$UZAK_DIZIN/$1/" "$YEREL_DIZIN/$1/"
 }
@@ -57,8 +71,21 @@ AYNALA() {
 # IKISI DE DENENIYOR: `set -e` ile icerik aynalamasi basarisiz olunca APK
 # aynalamasi HIC calismiyordu. Oysa bozuk bir surumden cikis yolu (fix-forward)
 # tam olarak o APK'ya bagli - en kotu anda kaybedilmemesi gereken sey odur.
-AYNALA content || { echo "[$(date -Is)] HATA: icerik aynalanamadi"; HATA=1; }
-AYNALA app     || { echo "[$(date -Is)] HATA: APK aynalanamadi";    HATA=1; }
+# rsync cikis 25 = --max-delete siniri asildi. Bu bir AG hatasi degil, bir
+# SIGORTA: merkezde beklenmeyen bir bosalma var. Ayrica belirtiyoruz ki operator
+# onu "gecici ag sorunu" sanip gormezden gelmesin.
+AYNALA content || {
+  d=$?
+  if [[ $d -eq 25 ]]; then
+    echo "[$(date -Is)] SILME SIGORTASI DEVREDE: merkezde ${MAX_SILME:-50}+ dosya eksik gorunuyor."
+    echo "             Ayna KORUNDU. Merkezi kontrol edin (DATA_DIR, disk, yeniden kurulum)."
+    echo "             Gercekten bu kadar silme gerekiyorsa: MAX_SILME=100000 $0"
+  else
+    echo "[$(date -Is)] HATA: icerik aynalanamadi (rsync $d)"
+  fi
+  HATA=1
+}
+AYNALA app || { echo "[$(date -Is)] HATA: APK aynalanamadi (rsync $?)"; HATA=1; }
 
 # ---------------------------------------------------------------------------
 # BUTUNLUK DENETIMI - bu aynanin en degerli parcasi.

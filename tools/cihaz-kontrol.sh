@@ -74,15 +74,28 @@ else
 fi
 
 baslik "5. H.264 donanim cozucu"
+# ONEMLI AYRIM: yazilim cozucusu her cihazda VARDIR ama 1080p'yi bu sinif
+# donanimda kaldirmaz (kare atlar, isinir). Onceki kontrol 'OMX\.|c2\.' ariyordu
+# ve bu desen YAZILIM cozuculerine de uyuyor:
+#     OMX.google.h264.decoder   /  c2.android.avc.decoder   <- YAZILIM
+#     OMX.MTK.VIDEO.DECODER.AVC /  c2.mtk.avc.decoder       <- DONANIM
+# Yani "donanim cozucu var" diyen kontrol, yalnizca yazilim cozucusu olan bir
+# cihazda da GECTI veriyordu - tam da 50 cihaz alinmadan once uyarmasi gereken yerde.
 KODEK=$(sh_ cat /etc/media_codecs.xml)
-if echo "$KODEK" | grep -qiE 'video/avc'; then
-  if echo "$KODEK" | grep -iE 'video/avc' -B3 | grep -qiE 'OMX\.|c2\.'; then
-    ye "H.264 (AVC) donanim cozucu var"
-  else
-    uy "H.264 var ama donanim cozucu dogrulanamadi"
-  fi
+# cmd media / codec listesi daha guvenilir kaynak; yoksa xml'e dusuyoruz
+LISTE=$(sh_ dumpsys media.player 2>/dev/null; echo "$KODEK")
+DONANIM=$(echo "$LISTE" | grep -oiE '(OMX|c2)\.[a-z0-9_.]*(avc|h264)[a-z0-9_.]*' \
+          | grep -viE '(OMX\.google\.|c2\.android\.|\.sw\.|software)' | sort -u)
+if [[ -n "$DONANIM" ]]; then
+  ye "H.264 DONANIM cozucu var"
+  bilgi "$(echo "$DONANIM" | head -3 | tr '\n' ' ')"
+elif echo "$LISTE" | grep -qiE 'video/avc|avc.decoder'; then
+  ha "H.264 yalnizca YAZILIM cozucusuyle destekleniyor gorunuyor"
+  bilgi "Yazilim cozucusu 1080p'de kare atlar ve cihaz isinir. 50 cihaz almadan once"
+  bilgi "GERCEK bir 1080p H.264 video ile 10 dakika kesintisiz oynatma testi yapin;"
+  bilgi "takiliyorsa ya 720p'ye dusun ya baska model secin."
 else
-  uy "media_codecs.xml okunamadi - pilotta gercek video ile test edin"
+  uy "kodek listesi okunamadi - pilotta gercek video ile test edin"
 fi
 if echo "$KODEK" | grep -qiE 'video/hevc'; then
   bilgi "HEVC de var; yine de H.264 kullanin - butun filoda ayni davranis garanti olsun"

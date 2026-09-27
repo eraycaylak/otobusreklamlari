@@ -27,16 +27,51 @@ mkdir -p "$HEDEF"
 DAMGA=$(date +%Y%m%d-%H%M%S)
 DOSYA="$HEDEF/reklam-yedek-$DAMGA.tar.gz"
 
+# ---------------------------------------------------------------------------
+# IZINLER ICERIKTEN ONCE.
+#
+# chmod ONCEDEN veriliyor ve dosya bos olarak olusturuluyor: yedek hicbir an
+# okunabilir izinlerle OZEL ANAHTAR tasimasin. Onceden chmod tar'DAN SONRAYDI ve
+# ikili bir sorun vardi:
+#   - tar, okurken degisen bir dosya gorurse ("file changed as we read it") 1 ile
+#     cikar. Bu kurulumda bu KACINILMAZ: oynatma loglari append-only NDJSON ve
+#     yedek cron'da, cihazlar log yuklerken calisiyor.
+#   - `set -e` o cikisi olumcul sayip betigi chmod'a GELMEDEN oldururdu
+# Sonuc: 0644 izinli, ozel imzalama anahtari iceren bir tar.gz geride kalirdi ve
+# betik "basarisiz" gorundugu icin kimse dosyaya bakmazdi.
+# ---------------------------------------------------------------------------
+umask 077
+: > "$DOSYA"
+chmod 600 "$DOSYA"   # icinde OZEL ANAHTAR var
+
+TAR_DURUM=0
 if [[ $TAM -eq 1 ]]; then
   echo "[$(date -Is)] TAM yedek (videolar dahil) aliniyor..."
-  tar -czf "$DOSYA" -C "$VERI" .
+  tar -czf "$DOSYA" -C "$VERI" . || TAR_DURUM=$?
 else
   echo "[$(date -Is)] yedek aliniyor (videolar HARIC)..."
   # content/ haric: videolar yeniden yuklenebilir, anahtar ve kayitlar yuklenemez
-  tar -czf "$DOSYA" -C "$VERI" --exclude='./content' --exclude='./incoming' --exclude='./app' .
+  tar -czf "$DOSYA" -C "$VERI" --exclude='./content' --exclude='./incoming' --exclude='./app' . || TAR_DURUM=$?
 fi
 
-chmod 600 "$DOSYA"   # icinde OZEL ANAHTAR var
+# tar cikis kodlari: 1 = UYARI (dosya okunurken degisti), 2 = OLUMCUL hata.
+# 1'i kabul ediyoruz cunku append-only loglarla kacinilmaz; 2'de duruyoruz.
+if [[ $TAR_DURUM -eq 1 ]]; then
+  echo "[$(date -Is)] UYARI: bazi dosyalar okunurken degisti (append-only loglar) - yedek gecerli"
+elif [[ $TAR_DURUM -ne 0 ]]; then
+  echo "[$(date -Is)] HATA: tar olumcul hata verdi ($TAR_DURUM) - yedek SILINIYOR"
+  rm -f "$DOSYA"
+  exit 1
+fi
+
+# Anahtar gercekten iceride mi? "Yedek var" sanip anahtarsiz bir arsiv tutmak,
+# yedek olmamasindan kotudur: fark ancak anahtar kaybolunca anlasilir.
+if ! tar -tzf "$DOSYA" 2>/dev/null | grep -q 'keys/ed25519-private.pem'; then
+  echo "[$(date -Is)] HATA: yedekte ozel imzalama anahtari YOK - yedek ise yaramaz"
+  echo "             (veri dizini: $VERI - anahtar uretildi mi?)"
+  rm -f "$DOSYA"
+  exit 1
+fi
 BOYUT=$(du -h "$DOSYA" | cut -f1)
 echo "[$(date -Is)] tamam: $DOSYA ($BOYUT)"
 

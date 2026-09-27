@@ -266,6 +266,52 @@ test('APK ve icerik kimlik dogrulamasiz indirilemez', async () => {
   guard.resetFailures()
 })
 
+/**
+ * YAPILANDIRMA GERILEMESI TESTI - kod degil, dosya denetimi.
+ *
+ * Mimarinin acikca soz verdigi dayaniklilik: "PtMP linki koptugunda nokta onbellegi
+ * BAYAT manifest servis eder, boylece otobusler yayina devam eder." Bu soz iki
+ * ayarin BIRLIKTE dogru olmasina bagli ve ikisi ayri dosyada:
+ *
+ *   1. merkez  : manifeste `Cache-Control: no-store` koyuyor (CIHAZ onbelleklemesin)
+ *   2. kutu    : `proxy_ignore_headers Cache-Control` ile bu basligi yok saymali
+ *
+ * (2) yoksa nginx yaniti HIC onbellege ALMAZ, proxy_cache_use_stale'in servis
+ * edecegi bir kopya olusmaz ve dayaniklilik PRATIKTE YOKTUR. Bunu ancak link
+ * gercekten koptugunda - yani en kotu anda, sahada - fark edebilirdiniz.
+ *
+ * Bu yuzden testle sabitliyoruz: ikisi birbirine bagli ve sessizce ayrisabilirler.
+ */
+test('nokta onbellegi manifesti GERCEKTEN onbellekleyebiliyor', async () => {
+  // (1) Merkez tarafi: no-store gonderiyor mu?
+  const kayit = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...H },
+    body: JSON.stringify({ id: 'OTOBUS-CACHE' })
+  })).json()
+  const r = await fetch(`${base}/api/v1/manifest`, {
+    headers: { authorization: `Bearer ${kayit.device.token}` }
+  })
+  assert.equal(r.status, 200)
+  assert.match(
+    r.headers.get('cache-control') || '', /no-store/,
+    'manifest CIHAZ tarafinda onbelleklenmemeli'
+  )
+
+  // (2) Kutu tarafi: nginx bu basligi yok sayiyor mu?
+  const conf = fs.readFileSync(new URL('../../onbellek-kutusu/nginx.conf', import.meta.url), 'utf8')
+  const manifestBloku = conf.slice(conf.indexOf('location = /api/v1/manifest'))
+  const blok = manifestBloku.slice(0, manifestBloku.indexOf('\n    }'))
+
+  assert.match(blok, /proxy_cache\s+manifest/, 'manifest onbellegi tanimli olmali')
+  assert.match(
+    blok, /proxy_ignore_headers[^;]*Cache-Control/,
+    'proxy_ignore_headers Cache-Control OLMADAN nginx no-store yanitini onbellege ALMAZ - ' +
+    'bayat manifest dayanikliligi pratikte yok olur'
+  )
+  assert.match(blok, /proxy_cache_use_stale/, 'bayat kopya servis edilebilmeli')
+})
+
 test('cok fazla basarisiz admin denemesi IP kilitler', async () => {
   // Bu test EN SONDA: kilitlenen IP sonraki testleri etkilerdi.
   guard.resetFailures()

@@ -75,6 +75,9 @@ async function refresh () {
       <td><span class="dot ${cls}"></span>${durum}</td>
       <td>${esc(d.label || d.id)}<div class="dim">${esc(d.id)}</div></td>
       <td>${esc(d.group)}</td>
+      <td title="${d.rolloutPinned ? 'elle atandi (kanarya)' : 'cihaz id hash inden otomatik'}">${
+        d.rolloutPinned ? `<strong>${esc(d.rolloutGroup)}</strong>` : `<span class="dim">${esc(d.rolloutGroup ?? '–')}</span>`
+      }</td>
       <td>${fmtAgo(d.lastSeenAt)}</td>
       <td>${esc(d.playlistVersion ?? '–')}</td>
       <td>${esc(ready)}</td>
@@ -98,6 +101,7 @@ async function refresh () {
     <td>${esc(c.advertiser || '–')}</td>
     <td>${c.validFrom ? esc(new Date(c.validFrom).toLocaleString('tr-TR')) : '–'}</td>
     <td>${c.validUntil ? esc(new Date(c.validUntil).toLocaleString('tr-TR')) : '–'}</td>
+    <td>${esc((c.dayparts || []).join(', ')) || '<span class="dim">gün boyu</span>'}</td>
     <td>${Number(c.weight) || 1}</td>
     <td>${esc((c.groups || []).join(', ') || 'hepsi')}</td>
     <td>${c.evergreen ? 'evergreen' : 'kampanya'}</td>
@@ -120,7 +124,15 @@ async function addDevice () {
     const r = await api('/api/admin/device', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id: $('dId').value.trim(), label: $('dLabel').value.trim(), group: $('dGroup').value.trim() || 'default' })
+    body: JSON.stringify({
+      id: $('dId').value.trim(),
+      label: $('dLabel').value.trim(),
+      group: $('dGroup').value.trim() || 'default',
+      // Bos ise ALAN HIC GONDERILMIYOR: sunucu o zaman cihaz id hash'inden
+      // dagitir. 0 gondermek "grup 0" demek olurdu ve her guncellemeyi bu
+      // otobuse ilk gonderirdi - istenmeyen bir kanarya.
+      ...($('dRollout').value.trim() ? { rolloutGroup: Number($('dRollout').value) } : {})
+    })
   })
     log(`Cihaz eklendi. TOKEN (bir daha gösterilmez): ${r.device.token}`)
     await refresh()
@@ -148,6 +160,10 @@ async function addCampaign () {
     validUntil: $('cUntil').value ? new Date($('cUntil').value).toISOString() : null,
     weight: Number($('cWeight').value) || 1,
     groups: $('cGroups').value.split(',').map((x) => x.trim()).filter(Boolean),
+    // Saat araligi: sunucu bicimi DOGRULUYOR ve hatali yazimi reddediyor. Cihaz
+    // tarafi bozuk bir tanimi "gun boyu" saydigi icin (ekrani karartmamak adina)
+    // yazim hatasi baska hicbir yerde gorunmezdi.
+    dayparts: $('cDayparts').value.split(',').map((x) => x.trim()).filter(Boolean),
     evergreen: ever
   }
   try {
@@ -159,8 +175,13 @@ async function addCampaign () {
 
 async function delCampaign (id) {
   if (!confirm(`${id} silinsin mi?`)) return
-  await api(`/api/admin/campaign/${id}`, { method: 'DELETE' })
-  await refresh()
+  // try/catch: sarmalanmamis bir reddetme tarayicida SESSIZ kalir, operator
+  // silmenin basarisiz oldugunu anlamaz ve kampanya yayinda kalmaya devam eder.
+  try {
+    await api(`/api/admin/campaign/${id}`, { method: 'DELETE' })
+    log(`Kampanya silindi: ${id}`)
+    await refresh()
+  } catch (e) { log('HATA: ' + e.message) }
 }
 
 async function uploadApk () {
@@ -176,8 +197,11 @@ async function uploadApk () {
 
 async function expandRollout () {
   if (!confirm('Güncelleme tüm cihazlara açılsın mı? 48 saat sorunsuz çalıştığından emin olun.')) return
-  await api('/api/admin/app/rollout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
-  await refresh()
+  try {
+    await api('/api/admin/app/rollout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
+    log('Kademeli yayım tüm cihazlara açıldı.')
+    await refresh()
+  } catch (e) { log('HATA: ' + e.message) }
 }
 
 async function temizlik (uygula) {

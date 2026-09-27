@@ -289,6 +289,70 @@ test('bozuk/bos log partisi tekrar-eleme durumunu BOZMAZ (cifte faturalama)', as
  * kanarya yap" dendiginde guncelleme rastgele iki BASKA otobuse gidiyordu - kademeli
  * yayimin tum amaci (riski ALACAK cihazi secmek) ortadan kalkiyordu.
  */
+/**
+ * DAYPART YAZIM HATASI SESSIZ KALMAMALI.
+ *
+ * Cihaz tarafinda Daypart.matches, ayristirilamayan bir araligi bilincli olarak
+ * "gun boyu gecerli" sayiyor: bozuk bir tanim yuzunden reklami hic oynatmamak, yanlis
+ * saatte oynatmaktan pahali olurdu. Bedeli su: "7-10" gibi bir yazim hatasi kabul
+ * edilir, isletmeci sabah kusagi satti sanir, reklam GUN BOYU doner ve kimse fark
+ * etmez. Hatanin gorulebilecegi tek yer kayit ani.
+ */
+test('bozuk daypart REDDEDILIR (yoksa sessizce gun boyu donerdi)', async () => {
+  const kur = (dayparts) => fetch(`${base}/api/admin/campaign`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'daypart-testi', itemSha, title: 'test',
+      validUntil: new Date(Date.now() + 86400000).toISOString(), dayparts
+    })
+  })
+
+  for (const bozuk of [['7-10'], ['25:00-30:00'], ['07:00'], ['07:00-10:00', 'oglen'], ['0700-1000']]) {
+    const r = await kur(bozuk)
+    assert.equal(r.status, 400, `"${bozuk}" reddedilmeliydi`)
+    assert.match((await r.json()).error, /daypart/)
+  }
+
+  // Baslangic = bitis anlamsiz: "gun boyu" istiyorsa alan BOS birakilmali
+  const esit = await kur(['09:00-09:00'])
+  assert.equal(esit.status, 400)
+
+  // Gecerli olanlar kabul edilmeli - gece yarisini asan aralik dahil
+  for (const iyi of [[], ['07:00-10:00'], ['07:00-10:00', '17:00-20:00'], ['22:00-02:00'], ['00:00-23:59']]) {
+    const r = await kur(iyi)
+    assert.equal(r.status, 200, `"${iyi}" kabul edilmeliydi`)
+    assert.deepEqual((await r.json()).campaign.dayparts, iyi)
+  }
+
+  await fetch(`${base}/api/admin/campaign/daypart-testi`, { method: 'DELETE', headers: adminHeaders })
+})
+
+/**
+ * Number(null) === 0 ve 0 "finite"dir: govdede rolloutGroup: null gonderen bir
+ * istemci cihazi GRUP 0'a koyuyordu - her guncellemeyi ilk alan, istenmeyen kanarya.
+ */
+test('rolloutGroup null/bos gonderilirse KANARYA yapilmaz', async () => {
+  for (const [deger, ad] of [[null, 'OTOBUS-N1'], ['', 'OTOBUS-N2'], [0, 'OTOBUS-N3'], [-1, 'OTOBUS-N4']]) {
+    const r = await (await fetch(`${base}/api/admin/device`, {
+      method: 'POST',
+      headers: { ...adminHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: ad, rolloutGroup: deger })
+    })).json()
+    assert.equal(r.device.rolloutPinned, false, `${JSON.stringify(deger)} elle atama sayilmamali`)
+    assert.ok(r.device.rolloutGroup >= 1, `grup 0 olmamali (${ad}: ${r.device.rolloutGroup})`)
+  }
+
+  // Gecerli bir deger ise ELLE ATAMA sayilir
+  const k = await (await fetch(`${base}/api/admin/device`, {
+    method: 'POST',
+    headers: { ...adminHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'OTOBUS-PIN', rolloutGroup: 1 })
+  })).json()
+  assert.equal(k.device.rolloutPinned, true)
+  assert.equal(k.device.rolloutGroup, 1)
+})
+
 test('cihaza elle atanan rollout grubu IMZALI manifestte gonderilir', async () => {
   const kayit = await (await fetch(`${base}/api/admin/device`, {
     method: 'POST',

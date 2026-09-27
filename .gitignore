@@ -5,6 +5,22 @@ npm-debug.log*
 # Sunucu verileri (icerik, loglar, ANAHTARLAR - asla commit edilmez)
 sunucu/data/
 
+# YEDEKLER - icinde Ed25519 OZEL IMZALAMA ANAHTARI var.
+# yedekle.sh varsayilan hedefi sunucu/yedekler/, yani DEPONUN ICI. Buraya
+# girmezse tek bir `git add -A`, tum filonun imzalama anahtarini depoya sokar;
+# anahtar sizarsa herkes gecerli manifest imzalayabilir ve cihazlara istedigi
+# icerigi yukleyebilir. Geri alinamaz bir sizinti.
+sunucu/yedekler/
+*.tar.gz
+
+# Ortam dosyalari: ADMIN_TOKEN ve PROVISION_SECRET burada tutulur
+.env
+*.env
+!*.env.ornek
+
+# Ed25519 anahtarlari nerede olursa olsun
+*.pem
+
 # Android
 android/.gradle/
 android/build/

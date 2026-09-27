@@ -41,10 +41,13 @@
       <input id="dId" placeholder="OTOBUS-014" style="width:150px">
       <input id="dLabel" placeholder="plaka / etiket" style="width:150px">
       <input id="dGroup" placeholder="grup (hat-14)" style="width:130px">
+      <input id="dRollout" type="number" min="1" placeholder="kanarya" style="width:90px"
+             title="Kademeli yayım grubu. Boş bırakırsanız cihaz id'sinden otomatik dağıtılır. 1 yazarsanız bu otobüs KANARYA olur: yeni sürümü ilk o alır.">
       <button onclick="addDevice()">Cihaz ekle</button>
     </div>
     <table><thead><tr>
-      <th>durum</th><th>cihaz</th><th>grup</th><th>son senkron</th><th>liste</th>
+      <th>durum</th><th>cihaz</th><th>grup</th><th title="kademeli yayım grubu (1 = kanarya)">kan.</th>
+      <th>son senkron</th><th>liste</th>
       <th>içerik</th><th>uygulama</th><th title="son pencerede inen bayt">pencere</th>
       <th>disk</th><th>sinyal</th><th>saat</th><th>son hata</th>
     </tr></thead><tbody id="devices"></tbody></table>
@@ -70,14 +73,19 @@
       <input id="cUntil" type="datetime-local" title="bitiş (zorunlu)">
       <input id="cWeight" type="number" min="1" value="1" style="width:70px" title="ağırlık">
       <input id="cGroups" placeholder="gruplar (virgülle)" style="width:150px">
+      <input id="cDayparts" placeholder="07:00-10:00,17:00-20:00" style="width:200px"
+             title="Saat aralığı (daypart). Boş = gün boyu. Gece yarısını aşan aralık desteklenir: 22:00-02:00. Biçim SS:DD-SS:DD olmalı; hatalı yazım kaydedilmez.">
       <label class="dim"><input id="cEver" type="checkbox"> evergreen</label>
       <button onclick="addCampaign()">Kaydet</button>
     </div>
     <p class="dim" style="margin:0 0 10px">
       Bitiş tarihi zorunlu: 4G olmadığı için uzaktan anlık kaldırma kanalı yok, reklam kendi kendine düşmeli.
       Yayına girişi <strong>24–48 saat önceye</strong> verin ki tüm otobüsler indirebilsin.
+      Saat aralığı, cihazın kendi saat diliminde değil <strong>sunucunun saat diliminde</strong> uygulanır
+      (<code>TIMEZONE</code>, varsayılan <code>Europe/Istanbul</code>) — ucuz stick'lerin çoğu UTC'dir ve
+      aksi halde sabah kuşağı öğleden sonra dönerdi.
     </p>
-    <table><thead><tr><th>kampanya</th><th>reklamveren</th><th>başlangıç</th><th>bitiş</th><th>ağırlık</th><th>gruplar</th><th>tip</th><th></th></tr></thead><tbody id="campaigns"></tbody></table>
+    <table><thead><tr><th>kampanya</th><th>reklamveren</th><th>başlangıç</th><th>bitiş</th><th title="saat aralığı">saat</th><th>ağırlık</th><th>gruplar</th><th>tip</th><th></th></tr></thead><tbody id="campaigns"></tbody></table>
   </section>
 
   <section>

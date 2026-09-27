@@ -50,25 +50,27 @@ Panel: `http://sunucu:8080` — admin token'ı girip **Bağlan**.
 
 ### Sistem servisi olarak
 
-```ini
-# /etc/systemd/system/reklam-sunucu.service
-[Unit]
-Description=Otobus reklam sunucusu
-After=network.target
-
-[Service]
-Type=simple
-User=reklam
-WorkingDirectory=/opt/reklam/sunucu
-Environment=ADMIN_TOKEN=uzun-rastgele-bir-dize
-Environment=PORT=8080
-ExecStart=/usr/bin/node src/index.js
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+```bash
+cd sunucu
+sudo ./scripts/sistem-kurulum.sh
 ```
+
+Betik gerekli **her şeyi** kurar ve bu bir kolaylık değil zorunluluk: depodaki
+`reklam-sunucu.service` üç şeyin var olmasını bekliyor ve hiçbirini kendisi
+oluşturmuyor.
+
+| Oluşturulan | Ne için |
+|---|---|
+| `reklam` sistem kullanıcısı | servis root olarak çalışmasın |
+| `/var/lib/reklam` (mod 700) | `DATA_DIR` — **özel imzalama anahtarı** burada |
+| `/etc/reklam/sunucu.env` (mod 640) | `ADMIN_TOKEN` (betik üretir ve ekrana basar), `TRUST_PROXY_HOPS`, `TIMEZONE`, `CONTENT_AUTH` |
+| imzalama anahtarı | yoksa üretilir; **varsa dokunulmaz** |
+
+> **Unit dosyasını elle kopyalamayın.** Eksik bir `EnvironmentFile` systemd için
+> ölümcüldür: servis hiç başlamaz, `Restart=always` yüzünden 5 saniyede bir yeniden
+> dener ve `journalctl`'e bakmayan biri için bu "sunucu çalışmıyor, sebebi yok"
+> demektir. (Unit artık `StartLimitBurst` ile beş denemeden sonra durup `failed`
+> durumunda kalıyor — arıza gizlenmiyor.)
 
 ---
 
@@ -119,6 +121,31 @@ sudo /opt/reklam/ayna.sh                      # ilk aynalama
 sudo systemctl reload nginx
 ```
 
+Aynalama her saat başı (dakika 7) çalışır ve şu dört şeyi garanti eder:
+
+| | Neden |
+|---|---|
+| **Bütünlük denetimi** | Dosya adları içerik adresli (`ad = sha256`), yani doğrulama yerel. `rsync` dosyaları boyut+tarihe göre atlar; eMMC bozulması veya yarıda kesilen bir yazma yüzünden **doğru boyutta ama bozuk** bir dosya oluşursa rsync onu bir daha hiç getirmez. O noktadaki **her** otobüs indirir, tam dosya hash'i tutmaz, baştan indirir — sonsuza kadar. Hash tutmayan dosya siliniyor ve hemen yeniden çekiliyor. |
+| **`--partial-dir`** | `--partial` yarım dosyayı **nihai adıyla** bırakır ve nginx onu tam dosya gibi servis eder. `--append-verify` de kullanılmıyor: o `--inplace`'i ima eder, yani bu önlemi sessizce iptal ederdi. |
+| **`--max-delete=50`** | Merkezde `DATA_DIR` değişirse veya disk takılmazsa uzak `content/` **boş** görünür ve düz `--delete` noktanın tüm aynasını siler. Sigorta devreye girerse ayna korunur ve sebep loga yazılır. Gerçekten gerekiyorsa: `MAX_SILME=100000 /opt/reklam/ayna.sh` |
+| **`flock`** | Yavaş bir PtMP linkinde aynalama bir saatten uzun sürebilir; iki rsync aynı dosyalara yazarsa tam da önlemeye çalıştığımız bozulmayı üretir. |
+
+> **Manifest önbelleği.** Merkez manifeste bilinçli olarak `Cache-Control: no-store`
+> koyuyor (**cihaz** onu önbelleklemesin, bitiş tarihleri taze olsun). nginx de
+> varsayılan olarak bu başlığı dinler ve yanıtı önbelleğe **almaz** — bu durumda
+> "PtMP koptuğunda bayat manifest servis edilir" sözü **pratikte yoktur** ve bunu
+> ancak link gerçekten koptuğunda fark ederdiniz. Bu yüzden `nginx.conf` içinde
+> `proxy_ignore_headers Cache-Control` var: başlığı **yalnızca kutu** yok sayıyor,
+> cihaza olduğu gibi gidiyor. İkisi ayrı dosyada olduğu için bir sunucu testi bu
+> bağı sabitliyor.
+
+> **Erişim listesi.** `/content` ve `/app` yerel aynadan servis edildiği için
+> merkezdeki cihaz tokeni zorunluluğu kutuya uygulanamaz (doğrulamak için merkeze
+> sormak gerekirdi, ki tam da PtMP kopukken çalışmaz). Sınır ağ katmanında:
+> `kurulum.sh` kutunun gerçek alt ağını tespit edip `allow` satırlarına yazar.
+> **Bir otobüsün ağından da doğrulayın** — 403 alıyorsanız liste o alt ağı
+> kapsamıyor ve hiçbir içerik inmez.
+
 **Kabul testi — bu geçmeden devam etmeyin:**
 
 ```bash
@@ -141,7 +168,14 @@ curl -s -o /dev/null -D- -H "Authorization: Bearer <cihaz-token>" \
 
 ### 4.1 Anahtarları yerleştirin
 
-`android/gradle.properties`:
+> **Sırları `android/gradle.properties` içine yazmayın — o dosya depoda takip
+> ediliyor.** Gerçek değerleri kullanıcı seviyesindeki dosyaya yazın:
+> `~/.gradle/gradle.properties` (Windows: `%USERPROFILE%\.gradle\gradle.properties`).
+> Gradle ikisini birleştirir ve kullanıcı dosyası bunu ezer; derleme aynen çalışır
+> ama sır depo geçmişine hiç girmez. Aşağıdaki anahtar adları her iki dosyada da
+> aynıdır.
+
+`~/.gradle/gradle.properties` (depodaki `android/gradle.properties` yalnızca şablon):
 
 ```properties
 MANIFEST_PUBLIC_KEY=dDDQzO3DpPzQnzlaUdw1cgJI8w3MOake66FGwloRkPM=
@@ -172,7 +206,8 @@ keytool -genkey -v -keystore reklam.jks -keyalg RSA -keysize 2048 \
         -validity 10000 -alias reklam
 ```
 
-Sonra `android/gradle.properties` içine (dosyada yorumlu örneği hazır):
+Sonra `~/.gradle/gradle.properties` içine (şablonu `android/gradle.properties`
+içinde yorumlu olarak hazır — **gerçek parolayı oraya değil, kullanıcı dosyasına**):
 
 ```properties
 RELEASE_KEYSTORE=/guvenli/yol/reklam.jks
@@ -345,8 +380,18 @@ cd sunucu
 ./scripts/yedekle.sh --tam      # videolar da dahil
 ```
 
-Yedek dosyası özel anahtarı içerir: `chmod 600` ile oluşturulur, **sunucunun kendisinde
-bırakmayın**, başka bir diske veya makineye kopyalayın.
+Yedek dosyası özel anahtarı içerir. Dosya **boş olarak ve `chmod 600` ile** oluşturulup
+sonra doldurulur; yani hiçbir an okunabilir izinlerle anahtar taşımaz. Betik ayrıca
+arşivin **gerçekten anahtarı içerdiğini** doğrular — "yedeğim var" sanıp anahtarsız bir
+arşiv tutmak, yedek olmamasından kötüdür, çünkü fark ancak anahtar kaybolunca anlaşılır.
+
+`tar`, okurken değişen bir dosya görürse 1 ile çıkar; bu kurulumda kaçınılmazdır
+(oynatma logları append-only NDJSON ve yedek cron'da, cihazlar log yüklerken çalışır).
+Bu **uyarı** kabul edilir, `tar`'ın ölümcül hatası (2) kabul edilmez.
+
+**Yedeği sunucunun kendisinde bırakmayın**, başka bir diske veya makineye kopyalayın.
+Varsayılan hedef `sunucu/yedekler/` deponun içindedir ve `.gitignore` onu dışlıyor —
+aksi halde tek bir `git add -A` tüm filonun imzalama anahtarını depoya sokardı.
 
 Otomatik:
 
@@ -385,7 +430,7 @@ eski heartbeat geçmişi. **Oynatma logları silinmez** — onlar faturanın day
 | Kare atlıyor | Dosya transcode standardından mı geçti? HEVC olmamalı |
 | Güncelleme gitmiyor | APK'lar **aynı anahtarla** mı imzalı? `rolloutGroup` cihazın grubunu kapsıyor mu? |
 | Panelde "GUVENLI MOD" yazıyor | Sürüm açılışta çöküyor. Düzeltilmiş APK'yı `&critical=1` ile yayınlayın |
-| `assembleRelease` hata veriyor | `gradle.properties` içinde `RELEASE_KEYSTORE` tanımlı mı? (§4.2) |
+| Release derlemesi hata veriyor | `~/.gradle/gradle.properties` içinde `RELEASE_KEYSTORE`, `MANIFEST_PUBLIC_KEY` ve `PROVISION_SECRET` tanımlı mı? (§4.2) Kapı `bundleRelease`/`packageRelease`/`installRelease` için de geçerli. |
 
 Cihaz logları:
 
