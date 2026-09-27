@@ -55,58 +55,52 @@ class ClockManager(context: Context) {
      *  3. IMZASIZ, IMZALIYI EZEMEZ - saldirinin tam kapandigi yer burasi.
      */
     fun onServerTime(epochMs: Long, signed: Boolean) {
-        if (epochMs <= 0L) return
-
-        /*
-         * MAKULLUK SUZGECI - GENIS PAYLA.
-         *
-         * Zemin degeri derleme zamani: bundan ONCEKI bir "sunucu zamani" fiziksel
-         * olarak imkansizdir (yazilim henuz yoktu), dolayisiyla ya bozuk bir yanit ya
-         * da kasitli bir geri alma girisimidir.
-         *
-         * PAY GENIS (30 gun) ve bu bilincli. Dar bir pay tehlikeli bir arıza modu
-         * yaratir: merkez sunucunun saati bir miktar geride kalmissa (VM saat kaymasi,
-         * NTP yok) TUM filo her zamani reddeder, hicbir cihaz bir daha guvenilir saate
-         * ulasamaz ve tarihli TUM kampanyalar sessizce yayindan duser. Yani suzgec,
-         * korumak istedigi seyi fleet capinda bozabilirdi. 30 gun, "1970'e dusmus" ya
-         * da "yillar geriye alinmis" vakalarini yakalar; iyi niyetli kaymayi yakalamaz -
-         * ki geriye gidis kontrolu (asagida) o isi zaten yapiyor.
-         */
-        if (epochMs < BuildConfig.BUILD_TIME_MS - ZEMIN_PAYI_MS ||
-            epochMs > BuildConfig.BUILD_TIME_MS + ILERI_SINIR_MS
-        ) {
-            val yil = java.time.Instant.ofEpochMilli(epochMs).atZone(java.time.ZoneOffset.UTC).year
-            Log.w(TAG, "sunucu zamani makul degil (yil $yil) - REDDEDILDI")
-            not("makul olmayan sunucu zamani (yil $yil) - sunucu saatini kontrol edin")
-            return
-        }
-
+        val elapsed = SystemClock.elapsedRealtime()
         val mevcut = readAnchor()
-        if (!signed && mevcut != null && mevcut.signed &&
-            ClockMath.anchorValid(mevcut, SystemClock.elapsedRealtime(), bootCount())
-        ) {
-            // Imzali capa duruyor: imzasiz kaynagin onu ezmesine izin verilmez.
-            return
+        val gecerliImzali = mevcut != null && mevcut.signed &&
+            ClockMath.anchorValid(mevcut, elapsed, bootCount())
+
+        // Karar kurali Android'den BAGIMSIZ ve testli: bkz. ClockMath.kabulEdilirMi
+        val kabul = ClockMath.kabulEdilirMi(
+            epochMs = epochMs,
+            signed = signed,
+            signedLatchMs = prefs.getLong(K_LAST_KNOWN_SIGNED, 0L),
+            buildTimeMs = BuildConfig.BUILD_TIME_MS,
+            gecerliImzaliCapaVar = gecerliImzali
+        )
+
+        when (kabul.karar) {
+            ClockMath.Karar.RED_MAKUL_DEGIL -> {
+                val yil = runCatching {
+                    java.time.Instant.ofEpochMilli(epochMs).atZone(java.time.ZoneOffset.UTC).year
+                }.getOrDefault(0)
+                Log.w(TAG, "sunucu zamani makul degil (yil $yil) - REDDEDILDI")
+                not("makul olmayan sunucu zamani (yil $yil) - sunucu saatini kontrol edin")
+                return
+            }
+            ClockMath.Karar.RED_GERIYE -> {
+                val farkSaat = (prefs.getLong(K_LAST_KNOWN_SIGNED, 0L) - epochMs) / 3_600_000
+                Log.w(TAG, "sunucu zamani GERIYE gidiyor ($farkSaat saat, imzali=$signed) - REDDEDILDI")
+                not("geriye giden zaman reddedildi ($farkSaat sa)")
+                return
+            }
+            ClockMath.Karar.RED_IMZASIZ_EZEMEZ -> {
+                // Gecerli imzali capa duruyor: imzasiz kaynak sessizce yok sayilir.
+                return
+            }
+            ClockMath.Karar.KABUL -> Unit
         }
 
-        val sonBilinen = prefs.getLong(K_LAST_KNOWN, 0L)
-        if (sonBilinen > 0 && epochMs < sonBilinen - GERI_TOLERANS_MS) {
-            val farkSaat = (sonBilinen - epochMs) / 3_600_000
-            Log.w(TAG, "sunucu zamani GERIYE gidiyor ($farkSaat saat) - REDDEDILDI")
-            not("geriye giden zaman reddedildi ($farkSaat sa)")
-            return
-        }
-
-        prefs.edit()
+        val edit = prefs.edit()
             .putLong(K_ANCHOR_EPOCH, epochMs)
-            .putLong(K_ANCHOR_ELAPSED, SystemClock.elapsedRealtime())
+            .putLong(K_ANCHOR_ELAPSED, elapsed)
             .putInt(K_ANCHOR_BOOT, bootCount())
             .putBoolean(K_ANCHOR_SIGNED, signed)
-            .putLong(K_LAST_KNOWN, epochMs)
             .putBoolean(K_INVALIDATED, false)
             // Duzelmis cihaz panele bayat alarm notu gondermeye devam etmesin.
             .putString(K_NOTE, if (signed) "" else "imzasiz kaynak (zayif capa)")
-            .apply()
+        if (kabul.latchUpdated) edit.putLong(K_LAST_KNOWN_SIGNED, epochMs)
+        edit.apply()
     }
 
     /**
@@ -208,15 +202,14 @@ class ClockManager(context: Context) {
         const val K_ANCHOR_ELAPSED = "anchorElapsed"
         const val K_ANCHOR_BOOT = "anchorBoot"
         const val K_ANCHOR_SIGNED = "anchorSigned"
-        const val K_LAST_KNOWN = "lastKnown"
+        /**
+         * Son IMZALI zaman. "Geriye gidemez" mandalinin tek kaynagi.
+         * Yeni anahtar adi bilincli: eski `lastKnown` degeri imzasiz kaynaklarla
+         * kirlenmis olabilir ve onu tasimak zehirlenmeyi surumle birlikte tasirdi.
+         */
+        const val K_LAST_KNOWN_SIGNED = "lastKnownSigned"
         const val K_INVALIDATED = "invalidated"
         const val K_NOTE = "note"
-        /** Saat duzeltmesinde kabul edilen geriye sapma (NTP/gecikme paylari icin). */
-        const val GERI_TOLERANS_MS = 10 * 60 * 1000L
-        /** Derleme zamani zemininin altinda kabul edilen pay - bkz. makulluk suzgeci. */
-        const val ZEMIN_PAYI_MS = 30L * 24 * 3600 * 1000
-        /** Derlemeden sonra kabul edilen en uzak gelecek. */
-        const val ILERI_SINIR_MS = 10L * 365 * 24 * 3600 * 1000
         /** Sistem saatini bu farkin altinda kurcalamiyoruz. */
         const val SISTEM_SAATI_TOLERANS_MS = 60_000L
     }

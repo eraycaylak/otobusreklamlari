@@ -26,7 +26,7 @@ npm test                                            # 44 test (uçtan uca + güv
 
 # 2) Android
 cd android
-./gradlew testDebugUnitTest                         # 70 birim testi
+./gradlew testDebugUnitTest                         # 81 birim testi
 
 #    Release derlemesi ÜÇ değer olmadan başlamaz (derleme anlaşılır bir mesajla durur;
 #    eskiden sessizce imzasız APK üretiyordu ve hata ancak sahada anlaşılıyordu):
@@ -116,7 +116,7 @@ Pilotta bir noktayı ve iki otobüsü tam çalıştır. 3 noktaya aynı anda gir
 | Ne | Nerede | Kapsam |
 |---|---|---|
 | **Sunucu — 44 test** | `sunucu/test/` | Uçtan uca akış (kesilen indirmenin Range ile devam etmesi dahil), imza doğrulama, manifestte saat dilimi ve `serverTime`, log tekilleştirme, CSV enjeksiyonu, deneme sınırı (komşu otobüsü kilitlemediği ve XFF ile atlatılamadığı dahil), içerik/APK yetkilendirmesi, transcode dayanıklılığı |
-| **Android — 70 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı), indirme önceliği (**süresi bitmiş içerik en sona** — yoksa pencere asla oynatılamayacak dosyaya giderdi), **sunucuyla kademeli yayım hash uyumu** |
+| **Android — 81 birim test** | `android/app/src/test/` | Uygunluk kuralı (bitiş tarihi, daypart, evergreen — ticari olarak en kritik karar), saat aralığı eşleştirmesi (gece yarısını aşan aralıklar dahil), ağırlıklı sıralama ve üst sınırı, monotonik saat (yeniden başlatma tespiti, imzalı/imzasız çapa kademesi, çapa yaşı, **gelen zamanın kabul kuralı** — geriye alma ve imzasız kaynakla mandal zehirleme dahil), indirme önceliği (**süresi bitmiş içerik en sona** — yoksa pencere asla oynatılamayacak dosyaya giderdi), **sunucuyla kademeli yayım hash uyumu** |
 | **CI** | `.github/workflows/ci.yml` | Her push'ta: sunucu testleri, Android birim testleri, lint, debug APK, shellcheck |
 
 Android'deki saf mantık (`Daypart`, `Weighting`, `ClockMath`, `SyncPlan`, `RolloutGroup`)

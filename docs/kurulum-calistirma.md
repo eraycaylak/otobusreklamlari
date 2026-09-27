@@ -233,7 +233,7 @@ RELEASE_KEY_PASSWORD=...
 ```bash
 cd android
 
-# 70 birim testi: saat aralıkları, uygunluk kuralı (validUntil/daypart/evergreen),
+# 81 birim testi: saat aralıkları, uygunluk kuralı (validUntil/daypart/evergreen),
 # ağırlıklı sıralama, saat mantığı (yeniden başlatma tespiti, imza kademesi, çapa yaşı),
 # indirme önceliği ve sunucuyla kademeli yayım hash uyumu
 ./gradlew testDebugUnitTest

@@ -141,4 +141,101 @@ class ClockMathTest {
     @Test fun `yas hesabi gecersiz capada sonsuzdur`() {
         assertEquals(Long.MAX_VALUE, ClockMath.ageMs(null, 100L))
     }
+
+    // ============================================ gelen zamanin kabulu
+    // Sistemin en sessiz saldiri yuzeyi. Iki yon de para kaybettirir:
+    //   geriye alma -> suresi DOLMUS / IPTAL EDILMIS reklam yeniden yayina girer
+    //   ileriye alma -> (imzasiz kaynak mandali yukseltebilirse) cihaz kalici olarak
+    //                   "saat supheli" durumuna kilitlenir, tarihli TUM kampanyalar duser
+
+    private val derleme = 1_788_220_800_000L          // 2026-09-01
+    private val simdiki = derleme + 30L * 86_400_000  // derlemeden 30 gun sonra
+
+    private fun kabul(
+        epochMs: Long,
+        signed: Boolean = true,
+        latch: Long = 0L,
+        imzaliCapa: Boolean = false
+    ) = ClockMath.kabulEdilirMi(epochMs, signed, latch, derleme, imzaliCapa)
+
+    @Test fun `imzali makul zaman kabul edilir ve mandali yukseltir`() {
+        val k = kabul(simdiki)
+        assertEquals(ClockMath.Karar.KABUL, k.karar)
+        assertTrue("imzali kaynak mandali yukseltmeli", k.latchUpdated)
+    }
+
+    @Test fun `imzasiz zaman kabul edilir ama MANDALI YUKSELTMEZ`() {
+        val k = kabul(simdiki, signed = false)
+        assertEquals(ClockMath.Karar.KABUL, k.karar)
+        assertFalse("imzasiz kaynak mandali yukseltmemeli", k.latchUpdated)
+    }
+
+    /**
+     * SALDIRI: imzasiz `Date` basligi ileriye alinir, mandal oraya cikar ve sonrasinda
+     * GERCEK imzali serverTime "geriye gidiyor" diye reddedilir. Cihaz kalici olarak
+     * saati supheli durumda kalir. Mandal yalnizca imzali zamanla yukseldigi icin bu
+     * zincir kirilmis olmali.
+     */
+    @Test fun `imzasiz ileri sicrama, sonraki IMZALI zamani engelleyemez`() {
+        val ileri = simdiki + 200L * 86_400_000     // 200 gun ileri, hala makul sinirda
+
+        val imzasiz = kabul(ileri, signed = false)
+        assertEquals(ClockMath.Karar.KABUL, imzasiz.karar)
+        assertFalse(imzasiz.latchUpdated)
+
+        // Mandal HALA 0 (imzasiz yukseltmedi) -> gercek zaman kabul edilir
+        val gercek = kabul(simdiki, signed = true, latch = 0L)
+        assertEquals(ClockMath.Karar.KABUL, gercek.karar)
+    }
+
+    @Test fun `IMZALI mandalin gerisindeki zaman reddedilir`() {
+        val k = kabul(simdiki - 86_400_000, latch = simdiki)
+        assertEquals(ClockMath.Karar.RED_GERIYE, k.karar)
+    }
+
+    @Test fun `mandal imzasiz kaynagi da asagidan baglar`() {
+        // Geriye alma saldirisi imzasiz kaynakla da yapilamamali
+        val k = kabul(simdiki - 86_400_000, signed = false, latch = simdiki)
+        assertEquals(ClockMath.Karar.RED_GERIYE, k.karar)
+    }
+
+    @Test fun `tolerans icindeki kucuk geri sapma kabul edilir`() {
+        // NTP/gecikme paylari: sunucular arasi birkac dakika normaldir
+        val k = kabul(simdiki - ClockMath.GERI_TOLERANS_MS + 1_000, latch = simdiki)
+        assertEquals(ClockMath.Karar.KABUL, k.karar)
+    }
+
+    @Test fun `imzasiz kaynak gecerli IMZALI capayi EZEMEZ`() {
+        val k = kabul(simdiki, signed = false, imzaliCapa = true)
+        assertEquals(ClockMath.Karar.RED_IMZASIZ_EZEMEZ, k.karar)
+    }
+
+    @Test fun `imzali kaynak imzali capayi EZEBILIR`() {
+        val k = kabul(simdiki, signed = true, imzaliCapa = true)
+        assertEquals(ClockMath.Karar.KABUL, k.karar)
+    }
+
+    @Test fun `yazilim var olmadan onceki zaman reddedilir`() {
+        assertEquals(ClockMath.Karar.RED_MAKUL_DEGIL, kabul(0L).karar)
+        assertEquals(ClockMath.Karar.RED_MAKUL_DEGIL, kabul(-1L).karar)
+        // 1970
+        assertEquals(ClockMath.Karar.RED_MAKUL_DEGIL, kabul(1_000L).karar)
+        // derlemeden 1 yil once
+        assertEquals(ClockMath.Karar.RED_MAKUL_DEGIL, kabul(derleme - 365L * 86_400_000).karar)
+    }
+
+    /**
+     * Zemin payi GENIS (30 gun) ve bu bilincli: merkez sunucunun saati bir miktar
+     * geride kalmissa (VM saat kaymasi, NTP yok) dar bir pay TUM filonun her zamani
+     * reddetmesine yol acar - yani suzgec, korumak istedigi seyi fleet capinda bozar.
+     */
+    @Test fun `zemin payi icindeki kucuk geri kayma kabul edilir`() {
+        val k = kabul(derleme - 20L * 86_400_000)
+        assertEquals(ClockMath.Karar.KABUL, k.karar)
+    }
+
+    @Test fun `cok uzak gelecek reddedilir`() {
+        val k = kabul(derleme + ClockMath.ILERI_SINIR_MS + 86_400_000)
+        assertEquals(ClockMath.Karar.RED_MAKUL_DEGIL, k.karar)
+    }
 }

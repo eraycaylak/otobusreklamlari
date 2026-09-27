@@ -292,6 +292,38 @@ sessizce yanılır:
 Sistem her açılışta bir artırır; sayaç değiştiyse cihaz yeniden başlamıştır — yön,
 tolerans, tahmin yok. Okunamayan ROM'larda eski sezgiye düşülüyor.
 
+### Gelen zamanın kabul kuralı
+
+Karar `ClockMath.kabulEdilirMi` içinde, **Android'den bağımsız ve 11 testle kaplı**.
+Bilinçli: bu kural sistemin en sessiz saldırı yüzeyi ve **iki yön de** para kaybettirir.
+
+| Durum | Karar | Neden |
+|---|---|---|
+| Yazılım var olmadan önceki bir an (1970, yıllar geriye) | **RED** | Fiziksel olarak imkânsız; bozuk yanıt veya kasıtlı geri alma |
+| Derlemeden 10+ yıl sonrası | **RED** | Aynı |
+| Son **imzalı** zamanın gerisi (10 dk tolerans dışı) | **RED** | Süresi dolmuş / **iptal edilmiş** reklamı diriltme girişimi |
+| İmzasız kaynak, geçerli imzalı çapa varken | **RED** | İmzasız `Date`, imzalı `serverTime`'ı ezemez |
+| İmzalı, makul | **KABUL** + mandalı yükseltir | Tek güvenilir kaynak |
+| İmzasız, makul, imzalı çapa yok | **KABUL**, mandalı **yükseltmez** | 1970 damgasını düzeltir ama güven vermez |
+
+Son satır kritik ve bir **arka kapıyı** kapatıyor: mandal önceden imzalı/imzasız
+ayrımı yapmadan güncelleniyordu, dolayısıyla
+
+1. saldırgan `Date`'i **ileriye** alır (ileri sıçrama kabul edilir — cihaz aylarca
+   kapalı kalmış olabilir, bu bilinçli bir tercih),
+2. mandal o ileri değere çıkar,
+3. bundan sonra **gerçek ve imzalı** `serverTime` "geriye gidiyor" diye reddedilir,
+4. cihaz **kalıcı olarak** "saat şüpheli" durumuna kilitlenir ve tarihli **tüm**
+   kampanyalar sessizce yayından düşer.
+
+Yani imzasız tek bir başlık, o otobüsün tarihli envanterini tamamen durdurabiliyordu.
+Mandal artık yalnızca imzalı zamanla yükseliyor; imzasız değer mandalın **altına
+inemez** (geriye alma hâlâ kapalı) ama onu **yükseltemez** de.
+
+Zemin payı **geniş (30 gün)** ve bu da bilinçli: merkez sunucunun saati bir miktar
+geride kalmışsa dar bir pay **tüm filonun** her zamanı reddetmesine yol açar — yani
+süzgeç, korumak istediği şeyi fleet çapında bozardı.
+
 ### Çapa yaşı
 
 30 günden eski bir çapa artık güvenilir sayılmıyor. Haftalarca merkezle hiç

@@ -122,4 +122,64 @@ object ClockMath {
     /** Geriye uyumlu kisayol. Guveni de gerekiyorsa [snapshot] kullanin. */
     fun now(anchor: Anchor?, elapsedNow: Long, systemNow: Long): Long =
         snapshot(anchor, elapsedNow, systemNow).nowMs
+
+    // ------------------------------------------------ gelen zamanin kabulu
+
+    /** Saat duzeltmesinde kabul edilen geriye sapma (NTP/gecikme paylari icin). */
+    const val GERI_TOLERANS_MS = 10 * 60 * 1000L
+    /** Derleme zamani zemininin altinda kabul edilen pay. */
+    const val ZEMIN_PAYI_MS = 30L * 24 * 3600 * 1000
+    /** Derlemeden sonra kabul edilen en uzak gelecek. */
+    const val ILERI_SINIR_MS = 10L * 365 * 24 * 3600 * 1000
+
+    enum class Karar {
+        /** Kabul; capa yazilir. `latchUpdated` ise mandal da yukselir. */
+        KABUL,
+        /** Deger makul degil (yazilim var olmadan onceki bir an, ya da cok uzak gelecek). */
+        RED_MAKUL_DEGIL,
+        /** Son IMZALI zamanin gerisinde - suresi dolmus reklami diriltme girisimi olabilir. */
+        RED_GERIYE,
+        /** Imzasiz kaynak, gecerli bir IMZALI capayi ezemez. */
+        RED_IMZASIZ_EZEMEZ
+    }
+
+    data class Kabul(val karar: Karar, val latchUpdated: Boolean = false)
+
+    /**
+     * Sunucudan gelen bir zamanin kabul edilip edilmeyecegi.
+     *
+     * Android'e bagimli DEGIL -> birim testi yazilabilir. Bu bilincli: kural, sistemin
+     * en sessiz saldiri yuzeyi. Zamani geriye almak suresi DOLMUS veya IPTAL EDILMIS
+     * reklamlari yeniden yayina sokar; ileriye almak ise - imzasiz kaynak mandali
+     * yukseltebilirse - cihazi kalici olarak "saat supheli" durumuna kilitler ve
+     * tarihli TUM kampanyalari yayindan dusurur. Iki yon de para kaybettirir, o yuzden
+     * ikisi de testle sabitlenmeli.
+     *
+     * @param signed zaman IMZALI manifest govdesinden mi geldi (yoksa HTTP `Date`)
+     * @param signedLatchMs son IMZALI zaman; 0 ise henuz yok
+     * @param gecerliImzaliCapaVar su an yapisal olarak gecerli ve IMZALI bir capa var mi
+     */
+    fun kabulEdilirMi(
+        epochMs: Long,
+        signed: Boolean,
+        signedLatchMs: Long,
+        buildTimeMs: Long,
+        gecerliImzaliCapaVar: Boolean
+    ): Kabul {
+        if (epochMs <= 0L) return Kabul(Karar.RED_MAKUL_DEGIL)
+
+        if (epochMs < buildTimeMs - ZEMIN_PAYI_MS || epochMs > buildTimeMs + ILERI_SINIR_MS) {
+            return Kabul(Karar.RED_MAKUL_DEGIL)
+        }
+
+        // Imzasiz kaynak, duran bir imzali capayi ezemez.
+        if (!signed && gecerliImzaliCapaVar) return Kabul(Karar.RED_IMZASIZ_EZEMEZ)
+
+        // Mandal: yalnizca IMZALI zamanla yukselir, ama HER kaynagi asagidan baglar.
+        if (signedLatchMs > 0 && epochMs < signedLatchMs - GERI_TOLERANS_MS) {
+            return Kabul(Karar.RED_GERIYE)
+        }
+
+        return Kabul(Karar.KABUL, latchUpdated = signed)
+    }
 }
