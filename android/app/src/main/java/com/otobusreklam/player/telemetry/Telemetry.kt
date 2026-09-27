@@ -119,6 +119,7 @@ class Telemetry(
         val contents = db.contents().all()
         val ready = contents.count { it.state == ContentState.READY }
         val bad = contents.count { it.state == ContentState.BAD }
+        val hazirShalar = contents.filter { it.state == ContentState.READY }.map { it.sha256 }.toSet()
 
         val body = JSONObject().apply {
             put("epoch", config.logEpoch)
@@ -127,6 +128,9 @@ class Telemetry(
             put("playlistVersion", manifest.playlistVersion)
             put("readyItems", ready)
             put("badItems", bad)
+            // Oynatilabilir oge sayisi: 0 ise ekran BOS demektir, panelde kirmizi yansin
+            put("playableItems", db.items().all().count { it.sha256 in hazirShalar })
+            put("safeMode", config.safeMode)
             put("totalItems", manifest.items.size)
             put("freeBytes", store.freeBytes())
             put("rssi", wifiRssi())

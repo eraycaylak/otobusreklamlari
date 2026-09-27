@@ -210,9 +210,19 @@ class PlayerActivity : AppCompatActivity() {
             lastReason = result.reason
 
             if (result.entries.isEmpty()) {
+                /*
+                 * EKRANIN BOS KALMASI bu sistemin en kotu sonucudur: reklamveren para
+                 * odedi, ekran siyah. Onceden bu durum SADECE cihaz loguna yaziliyordu -
+                 * yani kimse ogrenmiyordu. Artik lastError'a yaziliyor ve ilk heartbeat'te
+                 * panele dusuyor.
+                 */
                 Log.e(TAG, "liste bos: ${result.reason}")
+                config.lastError = "EKRAN BOS: ${result.reason}"
                 return@launch
             }
+            // Ekran yeniden doldu: onceki "bos" uyarisini temizle
+            if (config.lastError.startsWith("EKRAN BOS")) config.lastError = ""
+
             val playing = player?.mediaItemCount ?: 0
             if (immediate || playing == 0) {
                 applyPlaylist(result.entries)

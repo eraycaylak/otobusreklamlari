@@ -88,7 +88,9 @@ class Updater(
             // uygulama basina oturum siniri dolunca sonraki guncellemeler de
             // basarisiz olur. Basarisizlikta acikca birakiyoruz.
             if (sessionId >= 0) {
-                runCatching { installer.abandon(sessionId) }
+                // PackageInstaller.abandonSession(id) - Session.abandon() ise oturum
+                // nesnesi uzerindedir; installer uzerinde "abandon" diye bir metot yok.
+                runCatching { installer.abandonSession(sessionId) }
                     .onFailure { Log.w(TAG, "oturum birakilamadi: ${it.message}") }
             }
         }

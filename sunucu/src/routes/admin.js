@@ -89,6 +89,9 @@ adminRouter.get('/state', (req, res) => {
       rssi: hb?.rssi ?? null,
       reboots: hb?.reboots ?? null,
       clockTrusted: hb?.clockTrusted ?? null,
+      // 0 oynatilabilir oge = EKRAN BOS. Panelin en yuksek oncelikli alarmi budur.
+      playableItems: hb?.playableItems ?? null,
+      safeMode: hb?.safeMode ?? false,
       lastError: hb?.lastError ?? null
     }
   })

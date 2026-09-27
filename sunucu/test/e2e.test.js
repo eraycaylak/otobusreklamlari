@@ -286,6 +286,27 @@ test('heartbeat panele islenir', async () => {
   assert.equal(d.rssi, -58)
 })
 
+test('EKRAN BOS ve guvenli mod panele ulasir', async () => {
+  // Bu sistemin en kotu sonucu ekranin siyah kalmasidir; panelin bunu
+  // gorebilmesi icin sinyalin uctan uca aktigini dogruluyoruz.
+  const r = await fetch(`${base}/api/v1/heartbeat`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      appVersion: 41, playlistVersion: 2, readyItems: 0, totalItems: 3,
+      playableItems: 0, safeMode: true, clockTrusted: false,
+      lastError: 'EKRAN BOS: oynatilacak icerik yok'
+    })
+  })
+  assert.equal(r.status, 200)
+
+  const state = await (await fetch(`${base}/api/admin/state`, { headers: adminHeaders })).json()
+  const d = state.devices.find((x) => x.id === 'OTOBUS-014')
+  assert.equal(d.playableItems, 0, 'panel ekranin bos oldugunu gorebilmeli')
+  assert.equal(d.safeMode, true, 'panel guvenli modu gorebilmeli')
+  assert.match(d.lastError, /EKRAN BOS/)
+})
+
 test('oynatma kaniti raporu CSV uretir', async () => {
   const csv = await (await fetch(`${base}/api/admin/report.csv`, { headers: adminHeaders })).text()
   assert.match(csv, /kampanya;reklamveren;otobus;gun;oynatma_sayisi/)

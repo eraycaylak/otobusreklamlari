@@ -57,10 +57,16 @@ async function refresh () {
   $('ver').textContent = `liste sürümü: ${s.playlistVersion}`
 
   $('devices').innerHTML = s.devices.map((d) => {
-    const cls = d.revoked ? 'bad' : d.stale ? 'warn' : d.lastSeenAt ? 'ok' : 'warn'
+    // EKRAN BOS her seyin onunde gelir: reklamveren para odedi, ekran siyah.
+    const ekranBos = d.playableItems === 0
+    const cls = (d.revoked || ekranBos) ? 'bad' : (d.stale || d.safeMode) ? 'warn' : d.lastSeenAt ? 'ok' : 'warn'
+    const durum = d.revoked ? 'iptal'
+      : ekranBos ? 'EKRAN BOŞ'
+        : d.safeMode ? 'güvenli mod'
+          : d.stale ? 'bayat' : 'iyi'
     const ready = d.readyItems != null ? `${d.readyItems}/${d.totalItems}` : '–'
     return `<tr>
-      <td><span class="dot ${cls}"></span>${d.revoked ? 'iptal' : d.stale ? 'bayat' : 'iyi'}</td>
+      <td><span class="dot ${cls}"></span>${durum}</td>
       <td>${esc(d.label || d.id)}<div class="dim">${esc(d.id)}</div></td>
       <td>${esc(d.group)}</td>
       <td>${fmtAgo(d.lastSeenAt)}</td>
