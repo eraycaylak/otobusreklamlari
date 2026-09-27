@@ -289,6 +289,23 @@ var demektir; denetimde tartışma çıkmaması için raporda açıkça gösteri
 
 Sadece **tamamlanmış** oynatmalar sayılır — yarım kalan oynatma faturalanamaz.
 
+### Pencere raporu — "3 dakika yetiyor mu?"
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://sunucu:8080/api/admin/pencere-raporu.csv?from=2026-10-01&to=2026-10-15" \
+  -o pencere.csv
+```
+
+Otobüs başına gün bazında: senkron sayısı, toplam inen MB, **ortalama pencere MB**,
+en büyük pencere MB, hazır içerik oranı.
+
+Bu rapor projenin temel tasarım sorusunun ölçülmüş cevabıdır. Tüm mimari (transcode,
+önbellek kutusu, parçalı indirme) "otobüs 3 dakika duruyor" varsayımına göre kuruldu.
+**Pilotu büyütmeden önce bu rapora bakın:** ortalama pencere beklediğinizden küçükse
+AP sayısını artırın veya bitrate'i düşürün; hazır içerik oranı 1'e yaklaşmıyorsa
+pencere yetmiyor demektir.
+
 ---
 
 ## 8. Bakım
@@ -326,9 +343,9 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
 curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'      -d '{"uygula":true,"kanitGun":90}'      http://sunucu:8080/api/admin/temizlik
 ```
 
-Temizlenenler: hiçbir kampanyada geçmeyen yüklemeler, eski APK sürümleri ve
-`kanitGun`'den (varsayılan 90) eski kanıt kareleri. **Oynatma logları silinmez** —
-onlar faturanın dayanağı.
+Temizlenenler: hiçbir kampanyada geçmeyen yüklemeler, eski APK sürümleri,
+`kanitGun`'den (varsayılan 90) eski kanıt kareleri ve `gecmisGun`'den (varsayılan 180)
+eski heartbeat geçmişi. **Oynatma logları silinmez** — onlar faturanın dayanağı.
 
 ---
 

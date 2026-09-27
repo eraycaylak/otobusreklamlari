@@ -2,7 +2,7 @@ import express from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { config, paths } from '../config.js'
-import { db, save, bumpPlaylistVersion, readPlayLogs, readHeartbeats } from '../store.js'
+import { db, save, bumpPlaylistVersion, readPlayLogs, readHeartbeats, readHeartbeatHistory } from '../store.js'
 import { ingest } from '../transcode.js'
 import { buildChunks } from '../chunker.js'
 import { sha256File, randomToken, safeEqual, publicKeyBase64 } from '../crypto.js'
@@ -92,6 +92,12 @@ adminRouter.get('/state', (req, res) => {
       // 0 oynatilabilir oge = EKRAN BOS. Panelin en yuksek oncelikli alarmi budur.
       playableItems: hb?.playableItems ?? null,
       safeMode: hb?.safeMode ?? false,
+      // Oynatilamayan icerik: dosya saglam indi ama cihaz cozemiyor -> yeniden kodlanmali
+      badItems: hb?.badItems ?? null,
+      // Son pencerede inen bayt: "3 dakika yetiyor mu?" sorusunun dogrudan cevabi
+      sessionBytes: hb?.sessionBytes ?? null,
+      pendingLogs: hb?.pendingLogs ?? null,
+      model: hb?.model ?? null,
       lastError: hb?.lastError ?? null
     }
   })
@@ -317,11 +323,27 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
     if (!kuruProva) fs.rmSync(tam, { force: true })
   }
 
+  // Heartbeat gecmisi: gunluk bir dosya birikiyor. Oynatma loglari gibi faturaya
+  // dayanak degil, olcum verisi - saklama suresi disinda kalanlar silinebilir.
+  const gecmisGun = Number(req.body?.gecmisGun ?? 180)
+  const gecmisSiniri = Date.now() - gecmisGun * 24 * 3600 * 1000
+  let eskiGecmis = 0
+  for (const f of fs.readdirSync(paths.heartbeat)) {
+    if (!f.startsWith('gecmis-') || !f.endsWith('.ndjson')) continue
+    const tam = path.join(paths.heartbeat, f)
+    const st = fs.statSync(tam)
+    if (st.mtimeMs >= gecmisSiniri) continue
+    eskiGecmis += 1
+    bayt += st.size
+    if (!kuruProva) fs.rmSync(tam, { force: true })
+  }
+
   if (!kuruProva) save()
 
   res.json({
     kuruProva,
-    silinen: adlar.length + eskiApk.length + eskiKanit,
+    eskiHeartbeatGecmisi: eskiGecmis,
+    silinen: adlar.length + eskiApk.length + eskiKanit + eskiGecmis,
     kazanilanBayt: bayt,
     icerikler: adlar,
     apkler: eskiApk,
@@ -329,6 +351,50 @@ adminRouter.post('/temizlik', express.json(), (req, res) => {
     kanitSaklamaGun: kanitGun,
     not: kuruProva ? 'Gercekten silmek icin {"uygula":true} gonderin.' : 'Silindi.'
   })
+})
+
+/**
+ * PENCERE RAPORU - projenin temel tasarim sorusunun cevabi.
+ *
+ * "Otobus noktada 3 dakika duruyor, yetiyor mu?" sorusu tum mimariyi belirledi
+ * (transcode, onbellek kutusu, parcali indirme). Pilotta bunun GERCEKTEN boyle
+ * oldugunu olcmeden buyutmeye gecmek tahmine dayanmak olur.
+ *
+ * Her satir: cihaz + gun -> kac senkron, toplam/ortalama inen bayt, en buyuk pencere.
+ */
+adminRouter.get('/pencere-raporu.csv', (req, res) => {
+  const from = req.query.from ? String(req.query.from).slice(0, 10) : null
+  const to = req.query.to ? String(req.query.to).slice(0, 10) : null
+
+  const agg = new Map()
+  for (const h of readHeartbeatHistory(from, to)) {
+    const gun = String(h.at || '').slice(0, 10)
+    const key = `${h.deviceId}\u0000${gun}`
+    const cur = agg.get(key) || {
+      deviceId: h.deviceId, gun, senkron: 0, toplamBayt: 0, enBuyuk: 0, hazir: null, toplamIcerik: null
+    }
+    cur.senkron += 1
+    const bayt = Number(h.sessionBytes) || 0
+    cur.toplamBayt += bayt
+    if (bayt > cur.enBuyuk) cur.enBuyuk = bayt
+    if (h.readyItems != null) cur.hazir = h.readyItems
+    if (h.totalItems != null) cur.toplamIcerik = h.totalItems
+    agg.set(key, cur)
+  }
+
+  const lines = ['otobus;gun;senkron_sayisi;toplam_MB;ortalama_pencere_MB;en_buyuk_pencere_MB;hazir_icerik']
+  for (const a of [...agg.values()].sort((x, y) => (x.gun + x.deviceId).localeCompare(y.gun + y.deviceId))) {
+    const mb = (b) => (b / 1e6).toFixed(2)
+    lines.push([
+      csvSafe(a.deviceId), a.gun, a.senkron,
+      mb(a.toplamBayt), mb(a.senkron ? a.toplamBayt / a.senkron : 0), mb(a.enBuyuk),
+      a.hazir != null ? `${a.hazir}/${a.toplamIcerik}` : ''
+    ].join(';'))
+  }
+
+  res.set('Content-Type', 'text/csv; charset=utf-8')
+  res.set('Content-Disposition', 'attachment; filename="pencere-raporu.csv"')
+  res.send('\uFEFF' + lines.join('\n'))
 })
 
 /**

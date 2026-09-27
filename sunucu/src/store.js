@@ -90,15 +90,48 @@ export function readPlayLogs (fromDay, toDay) {
 
 export function writeHeartbeat (deviceId, data) {
   ensureDirs()
+  const kayit = { ...data, deviceId, at: new Date().toISOString() }
+
+  // Son durum (panel bunu okur)
   const file = path.join(paths.heartbeat, `${encodeURIComponent(deviceId)}.json`)
-  fs.writeFileSync(file, JSON.stringify({ ...data, deviceId, at: new Date().toISOString() }, null, 2))
+  fs.writeFileSync(file, JSON.stringify(kayit, null, 2))
+
+  /*
+   * GECMIS.
+   *
+   * Pilotun basari olcutu tam olarak bu veriye dayaniyor: "pencere basina kac bayt
+   * indi, 3 dakika yetiyor mu?". Sadece son durumu saklamak bu soruyu CEVAPSIZ
+   * birakiyordu - her heartbeat bir oncekini eziyordu. Gunluk append-only dosya
+   * kucuk (cihaz basina gunde birkac satir) ve dogrudan analiz edilebilir.
+   */
+  const gun = kayit.at.slice(0, 10)
+  fs.appendFileSync(path.join(paths.heartbeat, `gecmis-${gun}.ndjson`), JSON.stringify(kayit) + '\n')
+}
+
+/**
+ * Heartbeat gecmisini oku (gun araligiyla).
+ * Pilotun "3 dakikalik pencere yetiyor mu?" sorusunun veri kaynagi.
+ */
+export function readHeartbeatHistory (fromDay, toDay) {
+  ensureDirs()
+  const out = []
+  for (const f of fs.readdirSync(paths.heartbeat).sort()) {
+    if (!f.startsWith('gecmis-') || !f.endsWith('.ndjson')) continue
+    const day = f.slice('gecmis-'.length, 'gecmis-'.length + 10)
+    if (fromDay && day < fromDay) continue
+    if (toDay && day > toDay) continue
+    for (const line of fs.readFileSync(path.join(paths.heartbeat, f), 'utf8').split('\n')) {
+      if (line.trim()) { try { out.push(JSON.parse(line)) } catch { /* bozuk satiri atla */ } }
+    }
+  }
+  return out
 }
 
 export function readHeartbeats () {
   ensureDirs()
   const out = {}
   for (const f of fs.readdirSync(paths.heartbeat)) {
-    if (!f.endsWith('.json')) continue
+    if (!f.endsWith('.json')) continue   // gecmis-*.ndjson dosyalari haric
     try {
       const h = JSON.parse(fs.readFileSync(path.join(paths.heartbeat, f), 'utf8'))
       out[h.deviceId] = h

@@ -45,7 +45,8 @@
     </div>
     <table><thead><tr>
       <th>durum</th><th>cihaz</th><th>grup</th><th>son senkron</th><th>liste</th>
-      <th>içerik</th><th>uygulama</th><th>disk</th><th>sinyal</th><th>saat</th><th>son hata</th>
+      <th>içerik</th><th>uygulama</th><th title="son pencerede inen bayt">pencere</th>
+      <th>disk</th><th>sinyal</th><th>saat</th><th>son hata</th>
     </tr></thead><tbody id="devices"></tbody></table>
   </section>
 
@@ -106,8 +107,13 @@
     <h2>Oynatma kanıtı raporu</h2>
     <div class="row">
       <input id="rFrom" type="date"><input id="rTo" type="date">
-      <button onclick="report()">CSV indir</button>
+      <button onclick="report()">Oynatma raporu (CSV)</button>
+      <button class="sec" onclick="report('pencere-raporu')">Pencere raporu (CSV)</button>
     </div>
+    <p class="dim" style="margin:0">
+      <strong>Pencere raporu:</strong> otobüs başına senkron sayısı ve pencerede inen bayt.
+      "3 dakika yetiyor mu?" sorusunun ölçülmüş cevabı — pilotu büyütmeden önce buna bakın.
+    </p>
   </section>
 </main>
 <script src="app.js"></script>

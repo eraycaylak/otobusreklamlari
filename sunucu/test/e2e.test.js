@@ -286,6 +286,31 @@ test('heartbeat panele islenir', async () => {
   assert.equal(d.rssi, -58)
 })
 
+test('pencere raporu: 3 dakika yetiyor mu sorusunu olcer', async () => {
+  // Bu rapor projenin temel tasarim sorusunun cevabi. Heartbeat gecmisi
+  // tutulmasaydi her heartbeat bir oncekini ezer ve soru CEVAPSIZ kalirdi.
+  const at = (bayt) => fetch(`${base}/api/v1/heartbeat`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${deviceToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionBytes: bayt, readyItems: 2, totalItems: 3, playlistVersion: 2 })
+  })
+
+  await at(3_000_000)
+  await at(11_000_000)
+  await at(7_000_000)
+
+  const csv = await (await fetch(`${base}/api/admin/pencere-raporu.csv`, { headers: adminHeaders })).text()
+  assert.match(csv, /otobus;gun;senkron_sayisi;toplam_MB;ortalama_pencere_MB;en_buyuk_pencere_MB/)
+
+  const satir = csv.split('\n').find((l) => l.startsWith('OTOBUS-014'))
+  assert.ok(satir, 'cihaz satiri raporda olmali')
+  const [, , senkron, toplam, ortalama, enBuyuk] = satir.split(';')
+  assert.equal(Number(senkron) >= 3, true, `en az 3 senkron beklenir, ${senkron} geldi`)
+  assert.equal(Number(toplam) >= 21, true, `toplam >= 21 MB beklenir, ${toplam} geldi`)
+  assert.equal(Number(enBuyuk), 11, `en buyuk pencere 11 MB olmali, ${enBuyuk} geldi`)
+  assert.ok(Number(ortalama) > 0)
+})
+
 test('EKRAN BOS ve guvenli mod panele ulasir', async () => {
   // Bu sistemin en kotu sonucu ekranin siyah kalmasidir; panelin bunu
   // gorebilmesi icin sinyalin uctan uca aktigini dogruluyoruz.

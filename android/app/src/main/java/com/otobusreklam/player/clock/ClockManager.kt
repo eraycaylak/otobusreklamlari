@@ -21,8 +21,34 @@ class ClockManager(context: Context) {
 
     private val prefs = context.getSharedPreferences("reklam_clock", Context.MODE_PRIVATE)
 
-    /** Sunucudan gercek zaman geldiginde cagrilir. */
+    /**
+     * Sunucudan gercek zaman geldiginde cagrilir.
+     *
+     * SAAT GERIYE GIDEMEZ.
+     *
+     * Zaman kaynagimiz HTTP `Date` basligi ve o baslik IMZALI DEGIL. Ag duz HTTP
+     * oldugu icin (icerik butunlugu Ed25519 ile ayrica saglaniyor) AP agina erisebilen
+     * biri Date'i GERIYE alabilir. Sonuc: suresi dolmus ya da iptal edilmis reklamlar
+     * yeniden "gecerli" olur ve yayina doner - dogrudan ticari/hukuki zarar.
+     *
+     * Bu yuzden geriye dogru sicrama REDDEDILIYOR. Ileriye dogru sicrama kabul
+     * ediliyor (cihaz aylarca kapali kalmis olabilir) ama kaydediliyor; ileri saat
+     * en fazla reklami erken dusurur, ki bu tersine gore cok daha ucuz bir hatadir.
+     */
     fun onServerTime(epochMs: Long) {
+        if (epochMs <= 0L) return
+
+        val sonBilinen = prefs.getLong(K_LAST_KNOWN, 0L)
+        if (sonBilinen > 0 && epochMs < sonBilinen - GERI_TOLERANS_MS) {
+            val farkSaat = (sonBilinen - epochMs) / 3_600_000
+            android.util.Log.w(
+                "ClockManager",
+                "sunucu zamani GERIYE gidiyor ($farkSaat saat) - REDDEDILDI"
+            )
+            prefs.edit().putString(K_NOTE, "geriye giden zaman reddedildi ($farkSaat sa)").apply()
+            return
+        }
+
         prefs.edit()
             .putLong(K_ANCHOR_EPOCH, epochMs)
             .putLong(K_ANCHOR_ELAPSED, SystemClock.elapsedRealtime())
@@ -86,5 +112,7 @@ class ClockManager(context: Context) {
         const val K_TRUSTED = "trusted"
         const val K_NOTE = "note"
         const val TOLERANCE_MS = 5 * 60 * 1000L
+        /** Saat duzeltmesinde kabul edilen geriye sapma (NTP/gecikme paylari icin). */
+        const val GERI_TOLERANS_MS = 10 * 60 * 1000L
     }
 }

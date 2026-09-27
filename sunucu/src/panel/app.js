@@ -64,7 +64,13 @@ async function refresh () {
       : ekranBos ? 'EKRAN BOŞ'
         : d.safeMode ? 'güvenli mod'
           : d.stale ? 'bayat' : 'iyi'
-    const ready = d.readyItems != null ? `${d.readyItems}/${d.totalItems}` : '–'
+    const ready = d.readyItems != null
+      ? `${d.readyItems}/${d.totalItems}` + (d.badItems ? ` (${d.badItems} bozuk)` : '')
+      : '–'
+    // Son pencerede inen bayt: 3 dakikanin yetip yetmedigini dogrudan gosterir
+    const pencere = d.sessionBytes != null
+      ? (d.sessionBytes >= 1e6 ? (d.sessionBytes / 1e6).toFixed(1) + ' MB' : Math.round(d.sessionBytes / 1e3) + ' KB')
+      : '–'
     return `<tr>
       <td><span class="dot ${cls}"></span>${durum}</td>
       <td>${esc(d.label || d.id)}<div class="dim">${esc(d.id)}</div></td>
@@ -73,6 +79,7 @@ async function refresh () {
       <td>${esc(d.playlistVersion ?? '–')}</td>
       <td>${esc(ready)}</td>
       <td>${esc(d.appVersion ?? '–')}</td>
+      <td title="son senkron penceresinde inen bayt">${pencere}</td>
       <td>${d.freeBytes != null ? (d.freeBytes / 1e9).toFixed(1) + ' GB' : '–'}</td>
       <td>${d.rssi != null ? Number(d.rssi) + ' dBm' : '–'}</td>
       <td>${d.clockTrusted === false ? '<span style="color:var(--bad)">şüpheli</span>' : d.clockTrusted === true ? 'iyi' : '–'}</td>
@@ -185,9 +192,9 @@ async function temizlik (uygula) {
   } catch (e) { $('temizlikSonuc').textContent = 'HATA: ' + e.message }
 }
 
-function report () {
+function report (hangi = 'report') {
   const q = new URLSearchParams({ from: $('rFrom').value, to: $('rTo').value, token: TOKEN })
-  window.location = `/api/admin/report.csv?${q}`
+  window.location = `/api/admin/${hangi}.csv?${q}`
 }
 
 if (TOKEN) init().catch((e) => log('HATA: ' + e.message))
